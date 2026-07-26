@@ -30,6 +30,8 @@ jobs:
         run: dotnet build Tripo.Revit.sln --configuration Release --no-restore
       - name: Test full Windows solution
         if: runner.os == 'Windows'
+        env:
+          TRIPO_RUN_WINDOWS_CREDENTIAL_MANAGER_CANARY: "1"
         run: dotnet test Tripo.Revit.sln --configuration Release --no-build
       - name: Restore portable macOS subset
         if: runner.os == 'macOS'

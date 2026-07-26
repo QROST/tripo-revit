@@ -301,14 +301,7 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                     .Where(HasCredentialSensitiveOperation)
                     .Where(loaded =>
                         !excludeCurrentStoreHint ||
-                        !string.Equals(
-                            loaded.Hint.RecoveryId,
-                            _recoveryId,
-                            StringComparison.Ordinal) ||
-                        !string.Equals(
-                            loaded.Hint.Host,
-                            _host,
-                            StringComparison.Ordinal))
+                        !IsCurrentOwnedHint(loaded))
                     .Select(loaded => loaded with
                     {
                         FileName = host + "/" + loaded.FileName,
@@ -1222,6 +1215,27 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         loaded.Hint.Generation is not null ||
         loaded.Hint.Conversion is not null ||
         loaded.Hint.Import is { ReceiptKnown: false };
+
+    private bool IsCurrentOwnedHint(
+        LoadedTripoPanelRecoveryHint loaded)
+    {
+        TripoPanelRecoveryHint hint = loaded.Hint;
+        if (!string.Equals(
+                hint.RecoveryId,
+                _recoveryId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                hint.Host,
+                _host,
+                StringComparison.Ordinal) ||
+            hint.OwnerProcessId != _ownerProcessId ||
+            hint.OwnerProcessStartedAtUtc != _ownerProcessStartedAtUtc)
+        {
+            return false;
+        }
+
+        return OwnsPath(GetHintPath(hint.RecoveryId));
+    }
 
     private static void EnsurePrivateNonReparseDirectory(string path)
     {

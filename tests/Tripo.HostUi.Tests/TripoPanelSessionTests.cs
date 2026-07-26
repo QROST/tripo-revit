@@ -3118,6 +3118,59 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
+    public async Task CurrentHintExclusionRequiresExactOwnerIdentity()
+    {
+        string root = CreateTemporaryRoot();
+        try
+        {
+            Tripo.HostUi.TripoPanelRecoveryStore store =
+                new("rhino", root);
+            await using Tripo.HostUi.TripoPanelSession session =
+                new(
+                    new FakeConnector(new FakeHostControlClient()),
+                    store);
+            await session.ConnectAsync();
+            session.PrepareGeneration(
+                "a chair",
+                10_000,
+                withMaterials: false);
+            await session.DispatchPreparedGenerationAsync(
+                userConfirmedExternalCost: true);
+
+            string file = Assert.Single(
+                Directory.GetFiles(
+                    Path.Combine(root, "ui-recovery", "rhino"),
+                    "*.json"));
+            Tripo.HostUi.TripoPanelRecoveryHint hint =
+                System.Text.Json.JsonSerializer.Deserialize<
+                    Tripo.HostUi.TripoPanelRecoveryHint>(
+                    File.ReadAllText(file),
+                    Tripo.Bridge.BridgeJson.Options)
+                ?? throw new InvalidOperationException(
+                    "The recovery hint could not be read.");
+            hint = hint with
+            {
+                OwnerProcessId = int.MaxValue,
+                OwnerProcessStartedAtUtc = DateTimeOffset.UnixEpoch,
+            };
+            File.WriteAllText(
+                file,
+                System.Text.Json.JsonSerializer.Serialize(
+                    hint,
+                    CreateStrictRecoveryJsonOptions()));
+            Tripo.Bridge.BridgePaths.SetPrivateFileMode(file);
+
+            Assert.True(
+                store.LoadCredentialMutationBlocks(
+                    excludeCurrentStoreHint: true).HasBlock);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void HintFromAnotherLiveProcessIsConservativelyBlocking()
     {
         if (OperatingSystem.IsWindows())

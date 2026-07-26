@@ -166,6 +166,8 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         new(StringComparer.Ordinal);
     private bool _disposed;
 
+    internal string RootDirectory => _rootDirectory;
+
     public TripoPanelRecoveryStore(
         string host,
         string? rootDirectory = null)
@@ -627,6 +629,11 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         bool receiptKnown,
         Tripo.Bridge.HostControlOperationStatusReceipt? status)
     {
+        if (TripoPanelState.IsDefinitiveRequestRejection(status))
+        {
+            return null;
+        }
+
         if (!dispatchAttempted || operationId is null)
         {
             if (dispatchAttempted)

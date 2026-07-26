@@ -96,11 +96,39 @@ internal sealed class HostControlDispatcher :
                 exception.Message,
                 exception);
         }
+        catch (TripoCredentialPreflightException exception)
+        {
+            throw new Tripo.Bridge.HostControlCallException(
+                Tripo.Bridge.HostControlConstants.CredentialInvalidError,
+                exception.Message,
+                exception);
+        }
+        catch (TripoCredentialException exception)
+            when (string.Equals(
+                method,
+                Tripo.Bridge.HostControlConstants.CredentialSetMethod,
+                StringComparison.Ordinal))
+        {
+            throw new Tripo.Bridge.HostControlCallException(
+                Tripo.Bridge.HostControlConstants.CredentialInvalidError,
+                exception.Message,
+                exception);
+        }
         catch (TripoWorkflowException exception)
         {
             throw new Tripo.Bridge.HostControlCallException(
                 "workflow_error",
                 exception.Message,
+                exception);
+        }
+        catch (TripoPaidRequestRejectedException exception)
+        {
+            string requestSuffix = string.IsNullOrWhiteSpace(exception.RequestId)
+                ? string.Empty
+                : $" Request ID: {exception.RequestId}.";
+            throw new Tripo.Bridge.HostControlCallException(
+                Tripo.Bridge.HostControlConstants.CredentialRejectedError,
+                exception.Message + requestSuffix,
                 exception);
         }
         catch (TripoApiException exception)
@@ -249,7 +277,8 @@ internal sealed class HostControlDispatcher :
             receipt.CanResumeCreation,
             receipt.NextAction,
             receipt.UpdatedAtUtc,
-            receipt.FailureStage);
+            receipt.FailureStage,
+            receipt.OperationInProgress);
     }
 
     private async Task<Tripo.Bridge.HostControlObjConversionCreationReceipt>

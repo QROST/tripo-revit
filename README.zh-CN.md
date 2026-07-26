@@ -78,7 +78,7 @@ Revit 2026。
 构建 host project 时，也会构建 matching sidecar，并把完整输出复制到
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`。只有可选 MCP 路径才需要单独的
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` 输出。Bridge protocol v2 与 host-control
-protocol v2 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
+protocol v3 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
 
 ## 安装 Revit add-in
 
@@ -253,9 +253,12 @@ journal 表明 creation 可以继续时，重试才会启用，button 会明确�
 queued/running task 返回 0–100 范围内的真实 progress 时才显示 progress bar。已确认
 的 import receipt 会禁用对应 action；异常 receipt 会继续可见、可复制，并保留同
 UUID retry，不会被当作成功清除。当前 workflow 显式 reset 前，**New workflow**
-会持续禁用。环境变量提供的 key 不能从 panel 覆盖；任意 dispatch 发生后，workflow
-会一直绑定原 Tripo account 直到 reset：替换 key 只能 session-only，必须属于同一
-account；没有 durable task 的 paid UUID 还必须恢复精确原 key。
+会持续禁用。环境变量提供的 key 不能从 panel 覆盖；已被接受或结果不明确的
+dispatch 会一直绑定原 Tripo account 直到 reset：替换 key 只能 session-only，必须
+属于同一 account；没有 durable task 的未决 paid UUID 还必须恢复精确原 key。
+durable `request_rejected` 不同：它证明没有创建远端 task。generation 被拒时会清除
+generation 与全部 downstream stage；conversion 被拒时只清除 conversion/import，
+保留成功且 account-bound 的 generation。修正 credential 后，为被拒阶段准备新 UUID。
 
 dispatch 前，window 的 shared state layer 会在
 `%LOCALAPPDATA%\TripoMCP\ui-recovery\revit\<recovery-id>.json`
@@ -275,8 +278,8 @@ dispatch 前，window 的 shared state layer 会在
 独立发布的 Rhino panel；这是 cross-host release dependency，不是本仓库已经提供的
 证据。一个 root-global UI intent lease 会串行化跨 panel 的 credential-recovery scan、
 key-mutation request 与 paid dispatch call。另一个 private sidecar execution lease 会持有实际 key
-mutation，以及每个 UI 或 standalone MCP
-paid workflow 从 credential-derived fingerprint 直到 durable 或 ambiguous journal
+mutation，以及每个 UI 或 standalone MCP paid workflow 从 credential-derived
+fingerprint 直到 durable task、明确 `request_rejected` 或 ambiguous-outcome journal
 checkpoint 的全过程；即使 UI pipe 断开也不会提前释放。同一时间只允许一个 key
 mutation 或 paid create/convert；发生竞争时，必须等当前 operation checkpoint 后，
 以同一 UUID 重试。**Inspect recovered IDs** 只查询本地
@@ -370,12 +373,15 @@ MCP 入口通过以下八个 tools 暴露同一套 shared workflow：
 已提交的 import 通常返回 `transactionStatus: "committed"`；相同重试可能返回
 `"already_exists"`。
 
-付费阶段响应丢失时，以原 UUID、完全相同的显式参数、API key 与 document session
-重试；text-task 重试还必须保持相同的 effective model。不能只为重试而更换 UUID。
-使用 `tripo_operation_status` 检查对应的本地记录。
+付费阶段响应丢失时，先使用 `tripo_operation_status` 检查对应的本地记录。只有
+journal 表明 creation 可以继续时，才以原 UUID、完全相同的显式参数、API key 与
+document session 重试；text-task 重试还必须保持相同的 effective model。
 
 若 operation 为 `outcome_unknown`，不要自动重发或创建替代 UUID。保留 journal，并
 人工核对 Tripo task 或 billing history。
+
+若 operation 为 `request_rejected`，provider 已明确拒绝请求且没有创建 task。修正
+credential 并准备新 UUID；不要重试被拒 UUID。
 
 Image creation 会分别 checkpoint upload 与 generation。持久化的 `file_token` 允许
 继续 generation 而不再次 upload。若 upload 或 generation 结果不明确，会记录具体
@@ -463,7 +469,8 @@ server。
 
 active project 已不再匹配保留的 session。重新调用 `tripo_host_context`。
 paid-operation identity 不会迁移到新 session。已发送或响应丢失的付费阶段应先调用
-`tripo_operation_status`，保留原 UUID 与 identity，不能创建替代 operation。只有
+`tripo_operation_status`。除非 journal 报告明确 `request_rejected`，否则保留原 UUID
+与 identity；若被明确拒绝，应修正 credential 并准备新 UUID。只有
 重新打开同一个目标 project，并保持原 import UUID、conversion task 与 content、
 name、解析后的 mode 和 materials flag 时，import retry 才能使用新 session。
 

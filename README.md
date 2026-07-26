@@ -88,7 +88,7 @@ Building the host project also builds the matching sidecar and copies its
 complete output into
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`. The separate
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` output is needed only for the optional MCP
-path. Bridge protocol v2 and host-control protocol v2 have no
+path. Bridge protocol v2 and host-control protocol v3 have no
 backward-compatibility shim, so deploy all components from the same repository
 revision.
 
@@ -293,12 +293,16 @@ new request. An inconsistent import receipt remains visible and copyable,
 keeps the same-UUID retry available, and cannot be cleared as if it were a
 success. **New workflow** remains disabled until the current workflow is
 explicitly reset. Environment-provided keys cannot be replaced from the
-panel. After any dispatch, the workflow remains account-bound until reset:
+panel. An accepted or ambiguous dispatch remains account-bound until reset:
 replacement keys are session-only, must belong to the same Tripo account, and
 an unresolved paid UUID without a durable task requires the exact original
-key. Resetting a resolved workflow requires a default-No confirmation and
-does not cancel remote tasks, remove journal evidence, or delete imported
-Revit objects.
+key. A durable `request_rejected` receipt is different because it proves no
+remote task was created: generation rejection clears generation and every
+downstream stage, while conversion rejection clears only conversion/import and
+preserves the successful account-bound generation. Correct the credential and
+prepare a new UUID for the rejected stage. Resetting a resolved workflow
+requires a default-No confirmation and does not cancel remote tasks, remove
+journal evidence, or delete imported Revit objects.
 
 Before dispatch, the window's shared state layer atomically writes a private
 recovery hint under
@@ -323,9 +327,9 @@ cross-host release dependency, not evidence supplied by this repository. A
 root-global UI intent lease serializes cross-panel credential-recovery scans,
 key-mutation requests, and paid dispatch calls. A separate private sidecar
 execution lease holds the actual key mutation and each paid UI or standalone
-MCP workflow from
-credential-derived fingerprinting through its durable or ambiguous journal
-checkpoint, even if the UI pipe disconnects. Only one key mutation or paid
+MCP workflow from credential-derived fingerprinting through its durable task,
+definitive `request_rejected`, or ambiguous-outcome journal checkpoint, even if
+the UI pipe disconnects. Only one key mutation or paid
 create/convert is admitted at a time; retry a contending request with the same
 UUID after the active operation checkpoints. **Inspect recovered IDs** only
 queries local `operation_status`; it does not resend a paid call or import.
@@ -432,14 +436,18 @@ caller-owned UUIDs. A committed import normally returns
 `transactionStatus: "committed"`; an identical retry may return
 `"already_exists"`.
 
-If a paid-stage response is lost, retry with the original UUID, identical
-explicit arguments, API key, and document session; a text-task retry must also
-keep the same effective model. Never replace the UUID merely to retry. Use
-`tripo_operation_status` to inspect its local record.
+If a paid-stage response is lost, first use `tripo_operation_status` to inspect
+its local record. Retry with the original UUID, identical explicit arguments,
+API key, and document session only when the journal says creation can resume; a
+text-task retry must also keep the same effective model.
 
 If an operation is `outcome_unknown`, do not automatically resend it or create
 a replacement UUID. Preserve the journal and inspect Tripo task or billing
 history manually.
+
+If an operation is `request_rejected`, the provider definitively rejected the
+request before creating a task. Correct the credential and prepare a new UUID;
+do not retry the rejected UUID.
 
 Image creation checkpoints upload and generation separately. A durable
 `file_token` resumes generation without re-uploading. An ambiguous upload or
@@ -541,8 +549,9 @@ rejected. Then call `tripo_host_context` again.
 The active project no longer matches the retained session. Call
 `tripo_host_context` again. Paid-operation identity does not move to the new
 session. For a paid stage already sent or missing a response, first call
-`tripo_operation_status`, preserve its original UUID and identity, and do not
-create a replacement operation. An import retry may use the new session only
+`tripo_operation_status`. Preserve its original UUID and identity unless the
+journal reports definitive `request_rejected`; in that state, correct the
+credential and prepare a new UUID. An import retry may use the new session only
 after reopening the same target project and keeping the original import UUID,
 conversion task and content, name, resolved mode, and materials flag.
 

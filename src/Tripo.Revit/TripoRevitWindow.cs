@@ -1,17 +1,21 @@
 using System.ComponentModel;
-using System.Globalization;
+using System.Diagnostics;
 using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Navigation;
 
 namespace Tripo.Revit;
 
 internal sealed class TripoRevitWindow : Window
 {
     private const string ApiKeyInstructions =
-        "Create a Tripo v3 API key at:\n" +
-        "https://platform.tripo3d.ai/api-keys\n\n" +
-        "The key is sent only to the local Tripo sidecar. It is never saved " +
+        "Paste a Tripo v3 API key below. The key is sent only to the local " +
+        "Tripo sidecar. It is never saved " +
         "in this .rvt or .rfa document.\n\n" +
         "Replacing the effective key can make same-UUID recovery fail closed " +
         "for unfinished UI or MCP paid operations. Reconcile them first.";
@@ -20,41 +24,70 @@ internal sealed class TripoRevitWindow : Window
     private readonly TextBox _prompt = new()
     {
         AcceptsReturn = true,
-        Height = 76,
+        Height = 88,
+        MaxLength = 1024,
         Text = "A buildable architectural pavilion",
         TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
     };
-    private readonly TextBox _faceLimit = new() { Text = "20000" };
-    private readonly CheckBox _withMaterials = new()
+    private readonly TextBox _faceLimit = new()
     {
-        Content = "Request generated materials",
+        MaxLength = 6,
+        Text = "20000",
+        Width = 110,
+        HorizontalAlignment = HorizontalAlignment.Left,
     };
-    private readonly TextBox _name = new() { Text = "Tripo Model" };
+    private readonly CheckBox _withMaterials = WrappingCheckBox(
+        "Generate baked materials",
+        "Request Tripo texture/PBR output and bake it during OBJ conversion.");
+    private readonly TextBox _name = new()
+    {
+        MaxLength = 128,
+        Text = "Tripo Model",
+    };
     private readonly ComboBox _importMode = new()
     {
-        ItemsSource = new[] { "native", "mesh", "family" },
+        ItemsSource = ImportModeOption.All,
         SelectedIndex = 0,
+        MinWidth = 220,
     };
-    private readonly CheckBox _applyMaterials = new()
-    {
-        Content = "Apply baked diffuse materials",
-    };
+    private readonly CheckBox _applyMaterials = WrappingCheckBox(
+        "Apply baked materials from the OBJ bundle",
+        "Requires an MTL material library. The import receipt reports actual " +
+        "material and texture counts; review a zero count.");
     private readonly TextBlock _documentStatus = StatusBlock();
+    private readonly TextBox _documentSession = OperationStatusBox();
     private readonly TextBlock _credentialStatus = StatusBlock();
-    private readonly TextBox _recoveryStatus = OperationStatusBox();
-    private readonly TextBox _generationOperation = OperationStatusBox();
-    private readonly TextBlock _generationTask = StatusBlock();
-    private readonly TextBox _conversionOperation = OperationStatusBox();
-    private readonly TextBlock _conversionTask = StatusBlock();
-    private readonly TextBox _importOperation = OperationStatusBox();
     private readonly TextBlock _resultStatus = StatusBlock();
+    private readonly TextBlock _recoveryHeader = StatusBlock();
+    private readonly TextBox _recoveryStatus = RecoveryStatusBox();
+    private readonly TextBox _generationOperation = OperationStatusBox();
+    private readonly TextBox _generationTaskId = OperationStatusBox();
+    private readonly TextBlock _generationTask = StatusBlock();
+    private readonly TextBox _generationDiagnostic = DiagnosticBox();
+    private readonly ProgressBar _generationProgress = WorkflowProgressBar();
+    private readonly TextBox _conversionOperation = OperationStatusBox();
+    private readonly TextBox _conversionTaskId = OperationStatusBox();
+    private readonly TextBlock _conversionTask = StatusBlock();
+    private readonly TextBox _conversionDiagnostic = DiagnosticBox();
+    private readonly ProgressBar _conversionProgress = WorkflowProgressBar();
+    private readonly TextBox _importOperation = OperationStatusBox();
+    private readonly TextBlock _importStatus = StatusBlock();
+    private readonly TextBox _importReceipt = DiagnosticBox();
+    private readonly TextBlock _promptValidation = ValidationBlock();
+    private readonly TextBlock _faceLimitValidation = ValidationBlock();
+    private readonly TextBlock _objectNameValidation = ValidationBlock();
+    private readonly TextBlock _importModeHelp = StatusBlock();
+    private readonly Expander _recoveryExpander = new();
+    private readonly Expander _detailsExpander = new();
     private readonly Button _connect = ActionButton("Connect / Refresh");
     private readonly Button _apiKey = ActionButton("API key…");
+    private readonly Button _clearApiKey =
+        ActionButton("Remove saved key…");
     private readonly Button _checkRecovery =
-        ActionButton("Check recovered paid operations");
+        ActionButton("Inspect recovered IDs");
     private readonly Button _acknowledgeRecovery =
-        ActionButton("Acknowledge reconciled IDs…");
+        ActionButton("Acknowledge reviewed IDs…");
     private readonly Button _generate = ActionButton("Generate");
     private readonly Button _refreshGeneration =
         ActionButton("Refresh generation");
@@ -63,10 +96,22 @@ internal sealed class TripoRevitWindow : Window
         ActionButton("Refresh conversion");
     private readonly Button _import = ActionButton("Import into Revit");
     private readonly Button _reset = ActionButton("New workflow");
+    private readonly StackPanel _generationDiagnosticBlock;
+    private readonly StackPanel _conversionDiagnosticBlock;
+    private readonly StackPanel _importReceiptBlock;
     private Task _sessionDisposal = Task.CompletedTask;
     private string? _recoveryInspection;
+    private bool _recoveryInspectionHadFailures;
+    private string? _reviewedRecoveryToken;
     private string _displayedRecoveryToken =
         Tripo.HostUi.TripoPanelRecoveryLoadResult.Empty.PresentationToken;
+    private string? _displayedPreparedOperationId;
+    private string? _currentAction;
+    private bool _generationRefreshFailed;
+    private bool _conversionRefreshFailed;
+    private bool _generationJournalUpdatedOnFailedRefresh;
+    private bool _conversionJournalUpdatedOnFailedRefresh;
+    private bool _recoveryWasBlocked;
     private bool _allowClose;
     private bool _closing;
 
@@ -75,21 +120,44 @@ internal sealed class TripoRevitWindow : Window
     public TripoRevitWindow(Tripo.HostUi.TripoPanelSession session)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
+        _generationDiagnosticBlock = FieldBlock(
+            "Generation diagnostic",
+            _generationDiagnostic);
+        _conversionDiagnosticBlock = FieldBlock(
+            "Conversion diagnostic",
+            _conversionDiagnostic);
+        _importReceiptBlock = FieldBlock(
+            "Revit import receipt",
+            _importReceipt);
         _session.StateChanged += OnStateChanged;
         _session.RecoveryChanged += OnRecoveryChanged;
-        Title = "Tripo 3D";
-        Width = 520;
-        Height = 760;
-        MinWidth = 440;
-        MinHeight = 600;
+        Title = "Tripo 3D for Revit";
+        MinWidth = 380;
+        MinHeight = 300;
+        Width = Math.Min(
+            600,
+            Math.Max(MinWidth, SystemParameters.WorkArea.Width - 48));
+        Height = Math.Min(
+            760,
+            Math.Max(MinHeight, SystemParameters.WorkArea.Height - 48));
+        ResizeMode = ResizeMode.CanResizeWithGrip;
+        ShowInTaskbar = false;
+        SnapsToDevicePixels = true;
+        UseLayoutRounding = true;
+        WindowStyle = WindowStyle.ToolWindow;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        TextOptions.SetTextFormattingMode(
+            this,
+            TextFormattingMode.Display);
         Content = new ScrollViewer
         {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Content = BuildContent(),
         };
         _connect.Click += OnConnect;
         _apiKey.Click += OnApiKey;
+        _clearApiKey.Click += OnClearApiKey;
         _checkRecovery.Click += OnCheckRecovery;
         _acknowledgeRecovery.Click += OnAcknowledgeRecovery;
         _generate.Click += OnGenerate;
@@ -98,9 +166,32 @@ internal sealed class TripoRevitWindow : Window
         _refreshConversion.Click += OnRefreshConversion;
         _import.Click += OnImport;
         _reset.Click += OnReset;
+        _prompt.TextChanged += OnFormInputChanged;
+        _faceLimit.TextChanged += OnFormInputChanged;
+        _name.TextChanged += OnFormInputChanged;
+        _importMode.SelectionChanged += OnImportModeChanged;
         Loaded += OnLoaded;
         Closing += OnClosing;
         Closed += OnClosed;
+        AutomationProperties.SetName(
+            this,
+            "Tripo 3D generation workflow for Revit");
+        AutomationProperties.SetLiveSetting(
+            _resultStatus,
+            AutomationLiveSetting.Polite);
+        AutomationProperties.SetLiveSetting(
+            _recoveryHeader,
+            AutomationLiveSetting.Polite);
+        AutomationProperties.SetLiveSetting(
+            _generationTask,
+            AutomationLiveSetting.Polite);
+        AutomationProperties.SetLiveSetting(
+            _conversionTask,
+            AutomationLiveSetting.Polite);
+        AutomationProperties.SetLiveSetting(
+            _importStatus,
+            AutomationLiveSetting.Polite);
+        UpdateImportModeHelp();
         UpdateControls(_session.State);
     }
 
@@ -116,37 +207,114 @@ internal sealed class TripoRevitWindow : Window
         {
             Margin = new Thickness(16),
         };
-        panel.Children.Add(new TextBlock
+        StackPanel headerContent = new();
+        headerContent.Children.Add(new TextBlock
         {
-            FontSize = 18,
+            FontSize = 20,
             FontWeight = FontWeights.SemiBold,
             Text = "Tripo 3D for Revit",
         });
-        panel.Children.Add(_documentStatus);
-        panel.Children.Add(ButtonRow(_connect, _apiKey));
-        panel.Children.Add(_credentialStatus);
-        panel.Children.Add(SectionHeading("Crash recovery"));
-        panel.Children.Add(_recoveryStatus);
-        panel.Children.Add(
-            ButtonRow(_checkRecovery, _acknowledgeRecovery));
-        panel.Children.Add(SectionHeading("1. Text generation"));
-        panel.Children.Add(_prompt);
-        panel.Children.Add(FieldRow("Face limit", _faceLimit));
-        panel.Children.Add(_withMaterials);
-        panel.Children.Add(_generationOperation);
-        panel.Children.Add(ButtonRow(_generate, _refreshGeneration));
-        panel.Children.Add(_generationTask);
-        panel.Children.Add(SectionHeading("2. OBJ conversion"));
-        panel.Children.Add(_conversionOperation);
-        panel.Children.Add(ButtonRow(_convert, _refreshConversion));
-        panel.Children.Add(_conversionTask);
-        panel.Children.Add(SectionHeading("3. Import"));
-        panel.Children.Add(FieldRow("Object name", _name));
-        panel.Children.Add(FieldRow("Import mode", _importMode));
-        panel.Children.Add(_applyMaterials);
-        panel.Children.Add(_importOperation);
-        panel.Children.Add(ButtonRow(_import, _reset));
-        panel.Children.Add(_resultStatus);
+        headerContent.Children.Add(new TextBlock
+        {
+            Margin = new Thickness(0, 2, 0, 8),
+            Text =
+                "Generate, convert, and import with durable operation IDs.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        headerContent.Children.Add(_documentStatus);
+        headerContent.Children.Add(_credentialStatus);
+        _resultStatus.FontWeight = FontWeights.SemiBold;
+        headerContent.Children.Add(_resultStatus);
+        headerContent.Children.Add(
+            ActionRow(_connect, _apiKey, _clearApiKey));
+        panel.Children.Add(new Border
+        {
+            Background = SystemColors.ControlLightBrush,
+            BorderBrush = SystemColors.ActiveBorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(12),
+            Child = headerContent,
+        });
+
+        StackPanel recoveryContent = new();
+        recoveryContent.Children.Add(
+            FieldBlock("Recovered operation details", _recoveryStatus));
+        recoveryContent.Children.Add(
+            ActionRow(_checkRecovery, _acknowledgeRecovery));
+        _recoveryExpander.Header = _recoveryHeader;
+        _recoveryExpander.Margin = new Thickness(0, 12, 0, 0);
+        _recoveryExpander.Content = recoveryContent;
+        panel.Children.Add(_recoveryExpander);
+
+        _generationTask.FontWeight = FontWeights.SemiBold;
+        panel.Children.Add(Section(
+            "1 · Generate model",
+            FieldBlock("Describe the model", _prompt),
+            _promptValidation,
+            FieldBlock("Face limit (500–200,000)", _faceLimit),
+            _faceLimitValidation,
+            _withMaterials,
+            _generationTask,
+            _generationProgress,
+            ActionRow(_generate, _refreshGeneration)));
+
+        _conversionTask.FontWeight = FontWeights.SemiBold;
+        panel.Children.Add(Section(
+            "2 · Convert to OBJ",
+            new TextBlock
+            {
+                Text =
+                    "Conversion is a separate Tripo task and may consume credits.",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            _conversionTask,
+            _conversionProgress,
+            ActionRow(_convert, _refreshConversion)));
+
+        _importStatus.FontWeight = FontWeights.SemiBold;
+        panel.Children.Add(Section(
+            "3 · Import into Revit",
+            FieldBlock("Revit object name", _name),
+            _objectNameValidation,
+            FieldBlock("Revit import type", _importMode),
+            _importModeHelp,
+            _applyMaterials,
+            _importStatus,
+            ActionRow(_import)));
+
+        StackPanel detailsContent = new();
+        detailsContent.Children.Add(
+            FieldBlock("Document session ID", _documentSession));
+        detailsContent.Children.Add(
+            FieldBlock("Generation operation UUID", _generationOperation));
+        detailsContent.Children.Add(
+            FieldBlock("Generation task ID", _generationTaskId));
+        detailsContent.Children.Add(_generationDiagnosticBlock);
+        detailsContent.Children.Add(
+            FieldBlock("Conversion operation UUID", _conversionOperation));
+        detailsContent.Children.Add(
+            FieldBlock("Conversion task ID", _conversionTaskId));
+        detailsContent.Children.Add(_conversionDiagnosticBlock);
+        detailsContent.Children.Add(
+            FieldBlock("Import operation UUID", _importOperation));
+        detailsContent.Children.Add(_importReceiptBlock);
+        _detailsExpander.Header = "Workflow details and durable IDs";
+        _detailsExpander.Margin = new Thickness(0, 12, 0, 0);
+        _detailsExpander.Content = detailsContent;
+        panel.Children.Add(_detailsExpander);
+
+        _reset.ToolTip =
+            "Clear the resolved panel workflow. This does not cancel remote " +
+            "tasks or delete imported Revit objects.";
+        _refreshGeneration.ToolTip =
+            "Read the current generation task state; this sends no paid request.";
+        _refreshConversion.ToolTip =
+            "Read the current conversion task state; this sends no paid request.";
+        _checkRecovery.ToolTip =
+            "Read local journal state for recovered paid UUIDs; this sends no " +
+            "paid request and performs no import.";
+        panel.Children.Add(ActionRow(_reset));
         return panel;
     }
 
@@ -165,12 +333,9 @@ internal sealed class TripoRevitWindow : Window
 
         try
         {
-            await _session.ConnectAsync();
-            if (_session.State.CredentialStatus?.HasApiKey == false &&
-                !_session.Recovery.HasBlock)
-            {
-                await PromptForApiKeyAsync();
-            }
+            await RunWithStatusAsync(
+                "Connecting to the local Tripo sidecar…",
+                () => _session.ConnectAsync());
         }
         catch (Exception exception)
         {
@@ -184,10 +349,50 @@ internal sealed class TripoRevitWindow : Window
         {
             if (!_session.State.Connected)
             {
-                await _session.ConnectAsync();
+                await RunWithStatusAsync(
+                    "Connecting to the local Tripo sidecar…",
+                    () => _session.ConnectAsync());
             }
 
-            await PromptForApiKeyAsync();
+            Tripo.HostUi.TripoPanelState state = _session.State;
+            if (state.CredentialStatus is
+                {
+                    HasApiKey: true,
+                    Source: "environment",
+                })
+            {
+                throw new InvalidOperationException(
+                    "TRIPO_API_KEY from the Revit process environment " +
+                    "overrides panel keys. Change it outside Revit, restart " +
+                    "the process, then reconnect.");
+            }
+
+            bool recoveryMode = state.RequiresCredentialRecovery;
+            bool exactOriginalKeyRequired =
+                state.HasUnresolvedPaidDispatch;
+            if (recoveryMode &&
+                MessageBox.Show(
+                    this,
+                    (exactOriginalKeyRequired
+                        ? "A paid dispatch has no durable task ID. Restore the " +
+                          "exact original API key; the journal fingerprint is " +
+                          "bound to that key."
+                        : "An unresolved import or accepted remote task still " +
+                          "needs access. Use a key for the same Tripo account.") +
+                    "\n\n" +
+                    WorkflowIdentitySummary(state) +
+                    "\n\nThe recovery key remains session-only.",
+                    "Restore workflow access with an API key?",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            await PromptForApiKeyAsync(
+                recoveryMode,
+                exactOriginalKeyRequired);
         }
         catch (Exception exception)
         {
@@ -195,9 +400,13 @@ internal sealed class TripoRevitWindow : Window
         }
     }
 
-    private async Task PromptForApiKeyAsync()
+    private async Task PromptForApiKeyAsync(
+        bool recoveryMode,
+        bool exactOriginalKeyRequired)
     {
-        RevitApiKeyDialog dialog = new()
+        RevitApiKeyDialog dialog = new(
+            recoveryMode,
+            exactOriginalKeyRequired)
         {
             Owner = this,
         };
@@ -210,12 +419,47 @@ internal sealed class TripoRevitWindow : Window
             }
 
             secret = dialog.TakeAndClearApiKey();
-            await _session.SetApiKeyAsync(secret, dialog.Persist);
+            string key = secret ??
+                throw new InvalidOperationException(
+                    "Enter a Tripo API key before saving.");
+            await RunWithStatusAsync(
+                dialog.Persist
+                    ? "Saving the API key in the OS credential store…"
+                    : "Using the API key for this session…",
+                () => _session.SetApiKeyAsync(key, dialog.Persist));
         }
         finally
         {
             dialog.ClearApiKey();
             secret = null;
+        }
+    }
+
+    private async void OnClearApiKey(
+        object sender,
+        RoutedEventArgs args)
+    {
+        try
+        {
+            if (MessageBox.Show(
+                    this,
+                    "Remove the API key saved for this user? An environment " +
+                    "key, if configured outside Revit, remains effective.",
+                    "Remove saved Tripo API key?",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            await RunWithStatusAsync(
+                "Removing the saved API key…",
+                () => _session.ClearApiKeyAsync());
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception);
         }
     }
 
@@ -227,33 +471,65 @@ internal sealed class TripoRevitWindow : Window
         {
             if (!_session.State.Connected)
             {
-                await _session.ConnectAsync();
+                await RunWithStatusAsync(
+                    "Connecting to the local Tripo sidecar…",
+                    () => _session.ConnectAsync());
             }
 
-            List<string> lines = [];
-            foreach (Tripo.HostUi.LoadedTripoPanelRecoveryHint loaded in
-                     _session.Recovery.Hints)
-            {
-                lines.Add(
-                    $"Document session: {loaded.Hint.DocumentSessionId}");
-                await AppendPaidRecoveryStatusAsync(
-                    lines,
-                    "Generation",
-                    loaded.Hint.Generation);
-                await AppendPaidRecoveryStatusAsync(
-                    lines,
-                    "Conversion",
-                    loaded.Hint.Conversion);
-                if (loaded.Hint.Import is not null)
+            await RunWithStatusAsync(
+                "Inspecting recovered operation IDs…",
+                async () =>
                 {
-                    lines.Add(
-                        "Import: manual reconciliation required; UUID " +
-                        loaded.Hint.Import.OperationId);
-                }
-            }
+                    Tripo.HostUi.TripoPanelRecoveryLoadResult snapshot =
+                        _session.Recovery;
+                    string inspectedToken = snapshot.PresentationToken;
+                    _recoveryInspection = null;
+                    _recoveryInspectionHadFailures = false;
+                    _reviewedRecoveryToken = null;
+                    bool allPaidInspectionsSucceeded = true;
+                    List<string> lines = [];
+                    foreach (
+                        Tripo.HostUi.LoadedTripoPanelRecoveryHint loaded in
+                        snapshot.Hints)
+                    {
+                        lines.Add(
+                            "Document session: " +
+                            loaded.Hint.DocumentSessionId);
+                        allPaidInspectionsSucceeded &=
+                            await AppendPaidRecoveryStatusAsync(
+                            lines,
+                            "Generation",
+                            loaded.Hint.Generation);
+                        allPaidInspectionsSucceeded &=
+                            await AppendPaidRecoveryStatusAsync(
+                            lines,
+                            "Conversion",
+                            loaded.Hint.Conversion);
+                        if (loaded.Hint.Import is not null)
+                        {
+                            lines.Add(
+                                "Import: manual Revit reconciliation required; " +
+                                "UUID " +
+                                loaded.Hint.Import.OperationId);
+                        }
+                    }
 
-            _recoveryInspection = string.Join(Environment.NewLine, lines);
-            UpdateControls(_session.State);
+                    if (!string.Equals(
+                            inspectedToken,
+                            _session.Recovery.PresentationToken,
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "The recovered operation list changed during " +
+                            "inspection. Inspect the refreshed list again.");
+                    }
+
+                    _recoveryInspection =
+                        string.Join(Environment.NewLine, lines);
+                    _recoveryInspectionHadFailures =
+                        !allPaidInspectionsSucceeded;
+                    _reviewedRecoveryToken = inspectedToken;
+                });
         }
         catch (Exception exception)
         {
@@ -261,40 +537,62 @@ internal sealed class TripoRevitWindow : Window
         }
     }
 
-    private async Task AppendPaidRecoveryStatusAsync(
+    private async Task<bool> AppendPaidRecoveryStatusAsync(
         List<string> lines,
         string stage,
         Tripo.HostUi.TripoPanelPaidRecoveryHint? hint)
     {
         if (hint is null)
         {
-            return;
+            return true;
         }
 
         try
         {
             Tripo.Bridge.HostControlOperationStatusReceipt status =
-                await _session.InspectPaidRecoveryAsync(hint.OperationId);
+                await _session.InspectPaidRecoveryAsync(
+                    hint.OperationId,
+                    stage.ToLowerInvariant());
             lines.Add(
                 $"{stage}: {hint.OperationId} — {status.State}; " +
                 $"task: {status.CreatedTaskId ?? "not durable"}; " +
                 status.NextAction);
+            return true;
         }
         catch (Exception exception)
         {
             lines.Add(
                 $"{stage}: {hint.OperationId} — inspection failed: " +
                 BoundMessage(exception.Message));
+            return false;
         }
     }
 
-    private void OnAcknowledgeRecovery(
+    private async void OnAcknowledgeRecovery(
         object sender,
         RoutedEventArgs args)
     {
         try
         {
-            RevitRecoveryAcknowledgeDialog dialog = new()
+            Tripo.HostUi.TripoPanelRecoveryLoadResult recovery =
+                _session.Recovery;
+            string reviewedToken = _reviewedRecoveryToken ??
+                throw new InvalidOperationException(
+                    "Inspect the current recovered operation list before " +
+                    "acknowledging it.");
+            if (!string.Equals(
+                    reviewedToken,
+                    recovery.PresentationToken,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Inspect the current recovered operation list before " +
+                    "acknowledging it.");
+            }
+
+            RevitRecoveryAcknowledgeDialog dialog = new(
+                recovery,
+                _recoveryInspectionHadFailures)
             {
                 Owner = this,
             };
@@ -303,14 +601,29 @@ internal sealed class TripoRevitWindow : Window
                 return;
             }
 
-            _session.AcknowledgeRecoveredOperations(
-                dialog.Confirmation,
-                _displayedRecoveryToken);
+            string reviewReceiptId =
+                await _session.CreateRecoveryReviewReceiptAsync(
+                    reviewedToken,
+                    dialog.PaidResultsReviewed,
+                    dialog.ImportsReviewed,
+                    dialog.FailedInspectionsReviewed);
+            await _session.AcknowledgeRecoveredOperationsAsync(
+                reviewReceiptId);
             _recoveryInspection = null;
+            _recoveryInspectionHadFailures = false;
+            _reviewedRecoveryToken = null;
             UpdateControls(_session.State);
         }
         catch (Exception exception)
         {
+            _reviewedRecoveryToken = null;
+            _recoveryInspectionHadFailures = false;
+            _recoveryInspection =
+                "Recovery acknowledgement revalidation failed: " +
+                BoundMessage(exception.Message) +
+                Environment.NewLine +
+                "Inspect the current recovered IDs again before acknowledging.";
+            UpdateControls(_session.State);
             ShowError(exception);
         }
     }
@@ -319,7 +632,13 @@ internal sealed class TripoRevitWindow : Window
     {
         try
         {
-            bool retry = _session.State.GenerationRetryRequired;
+            _generationRefreshFailed = false;
+            _generationJournalUpdatedOnFailedRefresh = false;
+            await RunWithStatusAsync(
+                "Verifying the active Revit document…",
+                () => _session.ConnectAsync());
+            EnsureApiKeyAvailable();
+            bool retry = _session.State.GenerationRetryAllowed;
             Tripo.HostUi.PreparedTextGeneration prepared =
                 _session.State.PreparedGeneration ??
                 _session.PrepareGeneration(
@@ -332,13 +651,23 @@ internal sealed class TripoRevitWindow : Window
                         ? "Retry same generation operation?"
                         : "Create Tripo generation task?",
                     prepared.OperationId,
-                    retry))
+                    retry,
+                    "Prompt: " + BoundSummary(prepared.Prompt) +
+                    Environment.NewLine +
+                    $"Face limit: {prepared.FaceLimit}" +
+                    Environment.NewLine +
+                    "Baked materials: " +
+                    (prepared.WithMaterials ? "requested" : "not requested")))
             {
                 return;
             }
 
-            await _session.DispatchPreparedGenerationAsync(
-                userConfirmedExternalCost: true);
+            await RunWithStatusAsync(
+                retry
+                    ? "Retrying generation with the same UUID…"
+                    : "Submitting the generation request…",
+                () => _session.DispatchPreparedGenerationAsync(
+                    userConfirmedExternalCost: true));
         }
         catch (Exception exception)
         {
@@ -348,12 +677,35 @@ internal sealed class TripoRevitWindow : Window
 
     private async void OnRefreshGeneration(object sender, RoutedEventArgs args)
     {
+        _generationRefreshFailed = false;
+        _generationJournalUpdatedOnFailedRefresh = false;
+        Tripo.Bridge.HostControlOperationStatusReceipt? operationBefore =
+            _session.State.GenerationOperationStatus;
+        bool refreshAttempted = false;
         try
         {
-            await _session.RefreshGenerationStatusAsync();
+            await RunWithStatusAsync(
+                "Verifying the active Revit document…",
+                () => _session.ConnectAsync());
+            if (!CanInspectAmbiguousGenerationLocally(_session.State))
+            {
+                EnsureApiKeyAvailable();
+            }
+
+            refreshAttempted = true;
+            await RunWithStatusAsync(
+                "Refreshing generation status…",
+                () => _session.RefreshGenerationStatusAsync());
         }
         catch (Exception exception)
         {
+            _generationRefreshFailed = true;
+            _generationJournalUpdatedOnFailedRefresh =
+                refreshAttempted &&
+                !Equals(
+                    operationBefore,
+                    _session.State.GenerationOperationStatus);
+            UpdateControls(_session.State);
             ShowError(exception);
         }
     }
@@ -362,7 +714,13 @@ internal sealed class TripoRevitWindow : Window
     {
         try
         {
-            bool retry = _session.State.ConversionRetryRequired;
+            _conversionRefreshFailed = false;
+            _conversionJournalUpdatedOnFailedRefresh = false;
+            await RunWithStatusAsync(
+                "Verifying the active Revit document…",
+                () => _session.ConnectAsync());
+            EnsureApiKeyAvailable();
+            bool retry = _session.State.ConversionRetryAllowed;
             Tripo.HostUi.PreparedObjConversion prepared =
                 _session.State.PreparedConversion ??
                 _session.PrepareConversion(
@@ -374,13 +732,23 @@ internal sealed class TripoRevitWindow : Window
                         ? "Retry same OBJ conversion operation?"
                         : "Create Tripo OBJ conversion task?",
                     prepared.OperationId,
-                    retry))
+                    retry,
+                    "Source task: " + prepared.SourceTaskId +
+                    Environment.NewLine +
+                    $"Face limit: {prepared.FaceLimit}" +
+                    Environment.NewLine +
+                    "Bake materials: " +
+                    (prepared.WithMaterials ? "yes" : "no")))
             {
                 return;
             }
 
-            await _session.DispatchPreparedConversionAsync(
-                userConfirmedExternalCost: true);
+            await RunWithStatusAsync(
+                retry
+                    ? "Retrying conversion with the same UUID…"
+                    : "Submitting the OBJ conversion request…",
+                () => _session.DispatchPreparedConversionAsync(
+                    userConfirmedExternalCost: true));
         }
         catch (Exception exception)
         {
@@ -390,12 +758,35 @@ internal sealed class TripoRevitWindow : Window
 
     private async void OnRefreshConversion(object sender, RoutedEventArgs args)
     {
+        _conversionRefreshFailed = false;
+        _conversionJournalUpdatedOnFailedRefresh = false;
+        Tripo.Bridge.HostControlOperationStatusReceipt? operationBefore =
+            _session.State.ConversionOperationStatus;
+        bool refreshAttempted = false;
         try
         {
-            await _session.RefreshConversionStatusAsync();
+            await RunWithStatusAsync(
+                "Verifying the active Revit document…",
+                () => _session.ConnectAsync());
+            if (!CanInspectAmbiguousConversionLocally(_session.State))
+            {
+                EnsureApiKeyAvailable();
+            }
+
+            refreshAttempted = true;
+            await RunWithStatusAsync(
+                "Refreshing conversion status…",
+                () => _session.RefreshConversionStatusAsync());
         }
         catch (Exception exception)
         {
+            _conversionRefreshFailed = true;
+            _conversionJournalUpdatedOnFailedRefresh =
+                refreshAttempted &&
+                !Equals(
+                    operationBefore,
+                    _session.State.ConversionOperationStatus);
+            UpdateControls(_session.State);
             ShowError(exception);
         }
     }
@@ -404,13 +795,22 @@ internal sealed class TripoRevitWindow : Window
     {
         try
         {
+            await RunWithStatusAsync(
+                "Verifying the active Revit document…",
+                () => _session.ConnectAsync());
+            EnsureApiKeyAvailable();
+            ImportModeOption mode =
+                _importMode.SelectedItem as ImportModeOption ??
+                ImportModeOption.All[0];
             _ = _session.State.PreparedImport ??
                 _session.PrepareImport(
                     _name.Text,
-                    _importMode.SelectedItem?.ToString() ?? "native",
+                    mode.Value,
                     _applyMaterials.IsChecked == true);
             UpdateControls(_session.State);
-            await _session.ImportPreparedAsync();
+            await RunWithStatusAsync(
+                "Importing the prepared OBJ into Revit…",
+                () => _session.ImportPreparedAsync());
         }
         catch (Exception exception)
         {
@@ -422,7 +822,28 @@ internal sealed class TripoRevitWindow : Window
     {
         try
         {
+            Tripo.HostUi.TripoPanelState state = _session.State;
+            if (!state.HasWorkflowState ||
+                MessageBox.Show(
+                    this,
+                    "Clear this resolved panel workflow?\n\n" +
+                    WorkflowIdentitySummary(state) +
+                    "\n\nThis does not cancel remote Tripo tasks, remove " +
+                    "journal evidence, or delete imported Revit objects.",
+                    "Start a new Tripo workflow?",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
             _session.ResetWorkflow();
+            _generationRefreshFailed = false;
+            _conversionRefreshFailed = false;
+            _generationJournalUpdatedOnFailedRefresh = false;
+            _conversionJournalUpdatedOnFailedRefresh = false;
+            _detailsExpander.IsExpanded = false;
         }
         catch (Exception exception)
         {
@@ -433,7 +854,8 @@ internal sealed class TripoRevitWindow : Window
     private bool ConfirmPaidDispatch(
         string caption,
         string operationId,
-        bool retry) =>
+        bool retry,
+        string requestSummary) =>
         MessageBox.Show(
             this,
             (retry
@@ -442,12 +864,55 @@ internal sealed class TripoRevitWindow : Window
                   "receipt or fail closed. If no paid request was accepted " +
                   "previously, this retry can consume Tripo credits.\n\n"
                 : "This action can consume Tripo credits.\n\n") +
+            requestSummary +
+            "\n\n" +
             $"Durable operation ID:\n{operationId}\n\n" +
             "Keep this ID if the response is lost.",
             caption,
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No) == MessageBoxResult.Yes;
+
+    private async Task RunWithStatusAsync(
+        string currentAction,
+        Func<Task> operation)
+    {
+        _currentAction = currentAction;
+        UpdateControls(_session.State);
+        try
+        {
+            await operation();
+        }
+        finally
+        {
+            _currentAction = null;
+            UpdateControls(_session.State);
+        }
+    }
+
+    private void OnFormInputChanged(
+        object sender,
+        TextChangedEventArgs args) =>
+        UpdateControls(_session.State);
+
+    private void OnImportModeChanged(
+        object sender,
+        SelectionChangedEventArgs args)
+    {
+        UpdateImportModeHelp();
+        UpdateControls(_session.State);
+    }
+
+    private void UpdateImportModeHelp()
+    {
+        ImportModeOption mode =
+            _importMode.SelectedItem as ImportModeOption ??
+            ImportModeOption.All[0];
+        _importModeHelp.Text = mode.Description;
+        AutomationProperties.SetHelpText(
+            _importMode,
+            mode.Description);
+    }
 
     private void OnStateChanged(
         object? sender,
@@ -460,7 +925,20 @@ internal sealed class TripoRevitWindow : Window
         object? sender,
         Tripo.HostUi.TripoPanelRecoveryLoadResult recovery)
     {
-        _ = Dispatcher.BeginInvoke(() => UpdateControls(_session.State));
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (!string.Equals(
+                    _displayedRecoveryToken,
+                    recovery.PresentationToken,
+                    StringComparison.Ordinal))
+            {
+                _recoveryInspection = null;
+                _recoveryInspectionHadFailures = false;
+                _reviewedRecoveryToken = null;
+            }
+
+            UpdateControls(_session.State);
+        });
     }
 
     private void UpdateControls(Tripo.HostUi.TripoPanelState state)
@@ -470,203 +948,163 @@ internal sealed class TripoRevitWindow : Window
             return;
         }
 
-        _documentStatus.Text = state.Context is null
-            ? "Document: not connected"
-            : $"Document: {state.Context.DocumentTitle}\n" +
-              $"Session: {state.Context.DocumentSessionId}";
-        _credentialStatus.Text = state.CredentialStatus is null
-            ? "API key: unknown"
-            : $"API key: {state.CredentialStatus.Source}" +
-              (state.CredentialStatus.UsesWeakerFileFallback
-                  ? " (private-file fallback)"
-                  : string.Empty);
-        UpdateRecoveryControls(state);
-        _generationOperation.Text =
-            "Generation operation: " +
-            (state.PreparedGeneration?.OperationId ?? "not prepared");
-        string? generationTaskId =
-            state.GenerationReceipt?.TaskId ??
-            state.GenerationOperationStatus?.CreatedTaskId;
-        _generationTask.Text = generationTaskId is null
-            ? "Generation task: " +
-              (state.GenerationOperationStatus?.State ?? "not created")
-            : $"Generation task: {generationTaskId} — " +
-              $"{state.GenerationStatus?.Status ?? "refresh status"} " +
-              $"{state.GenerationStatus?.Progress ?? 0}%";
-        _conversionOperation.Text =
-            "Conversion operation: " +
-            (state.PreparedConversion?.OperationId ?? "not prepared");
-        string? conversionTaskId =
-            state.ConversionReceipt?.ConversionTaskId ??
-            state.ConversionOperationStatus?.CreatedTaskId;
-        _conversionTask.Text = conversionTaskId is null
-            ? "Conversion task: " +
-              (state.ConversionOperationStatus?.State ?? "not created")
-            : $"Conversion task: {conversionTaskId} — " +
-              $"{state.ConversionStatus?.Status ?? "refresh status"} " +
-              $"{state.ConversionStatus?.Progress ?? 0}%";
-        _importOperation.Text =
-            "Import operation: " +
-            (state.PreparedImport?.OperationId ?? "not prepared");
-        _resultStatus.Text = state.ImportReceipt is not null
-            ? $"Imported {state.ImportReceipt.HostReceipt.CreatedId} " +
-              $"({state.ImportReceipt.HostReceipt.TransactionStatus})."
-            : state.LastError ?? (state.Busy ? "Working…" : "Ready.");
-
-        bool ready = state.Connected && !state.Busy;
-        bool generationPrepared = state.PreparedGeneration is not null;
-        bool generationSucceeded =
-            state.GenerationStatus?.Status == "success";
-        bool conversionPrepared = state.PreparedConversion is not null;
-        bool conversionSucceeded =
-            state.ConversionStatus?.Status == "success";
-        bool recoveryBlocked = _session.Recovery.HasBlock;
-        _connect.IsEnabled = !state.Busy;
-        _apiKey.IsEnabled =
-            ready &&
-            !recoveryBlocked &&
-            !state.HasUnresolvedPaidDispatch;
-        _generate.IsEnabled =
-            ready &&
-            !recoveryBlocked &&
-            state.CredentialStatus?.HasApiKey == true &&
-            (!generationPrepared ||
-             (state.CanDispatchPreparedGeneration &&
-              (!state.GenerationDispatchAttempted ||
-               state.GenerationRetryAllowed)));
-        _generate.Content = !generationPrepared
-            ? "Generate"
-            : state.GenerationRetryAllowed
-                ? "Retry generation (same UUID)"
-                : state.GenerationRetryRequired
-                    ? "Refresh before retry"
-                : state.CanDispatchPreparedGeneration
-                    ? "Send prepared generation"
-                    : "Generation dispatched";
-        _refreshGeneration.IsEnabled =
-            ready &&
-            (state.GenerationReceipt is not null ||
-             state.GenerationDispatchAttempted);
-        _convert.IsEnabled =
-            ready &&
-            !recoveryBlocked &&
-            generationSucceeded &&
-            (!conversionPrepared ||
-             (state.CanDispatchPreparedConversion &&
-              (!state.ConversionDispatchAttempted ||
-               state.ConversionRetryAllowed)));
-        _convert.Content = !conversionPrepared
-            ? "Convert to OBJ"
-            : state.ConversionRetryAllowed
-                ? "Retry conversion (same UUID)"
-                : state.ConversionRetryRequired
-                    ? "Refresh before retry"
-                : state.CanDispatchPreparedConversion
-                    ? "Send prepared conversion"
-                    : "Conversion dispatched";
-        _refreshConversion.IsEnabled =
-            ready &&
-            (state.ConversionReceipt is not null ||
-             state.ConversionDispatchAttempted);
-        _import.IsEnabled =
-            ready &&
-            !recoveryBlocked &&
-            conversionSucceeded &&
-            (state.PreparedImport is null ||
-             state.CanDispatchPreparedImport);
-        _import.Content = state.PreparedImport is null
-            ? "Import into Revit"
-            : state.ImportRetryRequired
-                ? "Retry import (same UUID)"
-                : state.CanDispatchPreparedImport
-                    ? "Import prepared object"
-                    : "Imported";
-        _reset.IsEnabled =
-            ready &&
-            !recoveryBlocked &&
-            !state.HasUnresolvedDispatch;
-        _prompt.IsEnabled = ready && !generationPrepared;
-        _faceLimit.IsEnabled = ready && !generationPrepared;
-        _withMaterials.IsEnabled = ready && !generationPrepared;
-        _name.IsEnabled = ready && state.PreparedImport is null;
-        _importMode.IsEnabled = ready && state.PreparedImport is null;
-        _applyMaterials.IsEnabled =
-            ready && state.PreparedImport is null;
-    }
-
-    private void UpdateRecoveryControls(Tripo.HostUi.TripoPanelState state)
-    {
         Tripo.HostUi.TripoPanelRecoveryLoadResult recovery =
             _session.Recovery;
-        List<string> lines = [];
-        if (!recovery.HasBlock)
+        bool reviewedCurrentRecovery = string.Equals(
+            _reviewedRecoveryToken,
+            recovery.PresentationToken,
+            StringComparison.Ordinal);
+        Tripo.HostUi.TripoPanelPresentation presentation =
+            Tripo.HostUi.TripoPanelPresentation.Create(
+                state,
+                recovery,
+                _recoveryInspection,
+                reviewedCurrentRecovery,
+                _prompt.Text,
+                _faceLimit.Text,
+                _name.Text,
+                "Revit",
+                _currentAction,
+                _generationRefreshFailed,
+                _conversionRefreshFailed,
+                _generationJournalUpdatedOnFailedRefresh,
+                _conversionJournalUpdatedOnFailedRefresh,
+                _recoveryInspectionHadFailures);
+
+        _documentStatus.Text = presentation.DocumentStatus;
+        _documentSession.Text = presentation.DocumentSessionId;
+        _credentialStatus.Text = presentation.CredentialStatus;
+        SetLiveText(
+            _resultStatus,
+            presentation.ResultStatus,
+            VisibleWhen(presentation.ResultVisible));
+        AutomationProperties.SetHelpText(
+            _resultStatus,
+            presentation.ResultKind.ToString());
+
+        SetLiveText(_recoveryHeader, presentation.RecoveryHeader);
+        _recoveryStatus.Text = presentation.RecoveryDetails;
+        if (presentation.RecoveryHasBlock && !_recoveryWasBlocked)
         {
-            lines.Add("No recovered operation IDs require reconciliation.");
+            _recoveryExpander.IsExpanded = true;
         }
-        else
+        else if (!presentation.RecoveryHasBlock && _recoveryWasBlocked)
         {
-            lines.Add(
-                "Recovered IDs block new workflows and API-key changes until " +
-                "they are checked and explicitly acknowledged.");
-            foreach (Tripo.HostUi.LoadedTripoPanelRecoveryHint loaded in
-                     recovery.Hints)
-            {
-                lines.Add(
-                    $"Document session: {loaded.Hint.DocumentSessionId}");
-                if (loaded.Hint.Generation is not null)
-                {
-                    lines.Add(
-                        "Generation UUID: " +
-                        loaded.Hint.Generation.OperationId);
-                }
-
-                if (loaded.Hint.Conversion is not null)
-                {
-                    lines.Add(
-                        "Conversion UUID: " +
-                        loaded.Hint.Conversion.OperationId);
-                }
-
-                if (loaded.Hint.Import is not null)
-                {
-                    lines.Add(
-                        "Import UUID: " +
-                        loaded.Hint.Import.OperationId);
-                }
-            }
-
-            foreach (Tripo.HostUi.TripoPanelRecoveryIssue issue in
-                     recovery.Issues)
-            {
-                lines.Add(
-                    $"Blocked recovery file {issue.FileName}: " +
-                    $"{issue.Code}. {issue.Message}");
-            }
+            _recoveryExpander.IsExpanded = false;
         }
 
-        if (!string.IsNullOrWhiteSpace(_recoveryInspection))
-        {
-            lines.Add(_recoveryInspection);
-        }
+        _recoveryWasBlocked = presentation.RecoveryHasBlock;
 
-        _recoveryStatus.Text = string.Join(Environment.NewLine, lines);
-        _checkRecovery.IsEnabled =
-            state.Connected &&
-            !state.Busy &&
-            recovery.Hints.Count > 0;
+        _generationOperation.Text = presentation.GenerationOperationId;
+        _generationTaskId.Text = presentation.GenerationTaskId;
+        SetLiveText(_generationTask, presentation.GenerationStatus);
+        _generationDiagnostic.Text = presentation.GenerationDiagnostic;
+        _generationDiagnosticBlock.Visibility =
+            VisibleWhen(presentation.GenerationDiagnosticVisible);
+        SetProgress(
+            _generationProgress,
+            presentation.GenerationProgress,
+            presentation.GenerationStatus);
+
+        _conversionOperation.Text = presentation.ConversionOperationId;
+        _conversionTaskId.Text = presentation.ConversionTaskId;
+        SetLiveText(_conversionTask, presentation.ConversionStatus);
+        _conversionDiagnostic.Text = presentation.ConversionDiagnostic;
+        _conversionDiagnosticBlock.Visibility =
+            VisibleWhen(presentation.ConversionDiagnosticVisible);
+        SetProgress(
+            _conversionProgress,
+            presentation.ConversionProgress,
+            presentation.ConversionStatus);
+
+        _importOperation.Text = presentation.ImportOperationId;
+        SetLiveText(_importStatus, presentation.ImportStatus);
+        _importReceipt.Text = presentation.ImportReceiptDetails;
+        _importReceiptBlock.Visibility =
+            VisibleWhen(presentation.ImportReceiptDetailsVisible);
+
+        SetLiveText(
+            _promptValidation,
+            presentation.PromptValidation,
+            VisibleWhen(presentation.PromptValidationVisible));
+        SetLiveText(
+            _faceLimitValidation,
+            presentation.FaceLimitValidation,
+            VisibleWhen(presentation.FaceLimitValidationVisible));
+        SetLiveText(
+            _objectNameValidation,
+            presentation.ObjectNameValidation,
+            VisibleWhen(presentation.ObjectNameValidationVisible));
+
+        _connect.IsEnabled = presentation.ConnectEnabled;
+        SetActionHelp(_connect, presentation.ConnectHelp);
+        _apiKey.IsEnabled = presentation.ApiKeyEnabled;
+        SetActionHelp(_apiKey, presentation.ApiKeyHelp);
+        _clearApiKey.IsEnabled = presentation.ClearApiKeyEnabled;
+        SetActionHelp(
+            _clearApiKey,
+            presentation.ClearApiKeyHelp);
+        _checkRecovery.IsEnabled = presentation.CheckRecoveryEnabled;
+        SetActionHelp(
+            _checkRecovery,
+            presentation.CheckRecoveryHelp);
         _acknowledgeRecovery.IsEnabled =
-            !state.Busy &&
-            recovery.Hints.Count > 0 &&
-            recovery.Issues.Count == 0;
-        _displayedRecoveryToken = recovery.PresentationToken;
+            presentation.AcknowledgeRecoveryEnabled;
+        SetActionHelp(
+            _acknowledgeRecovery,
+            presentation.AcknowledgeRecoveryHelp);
+        _generate.IsEnabled = presentation.GenerateEnabled;
+        _generate.Content = presentation.GenerateText;
+        SetActionHelp(_generate, presentation.GenerateHelp);
+        _refreshGeneration.IsEnabled =
+            presentation.RefreshGenerationEnabled;
+        SetActionHelp(
+            _refreshGeneration,
+            presentation.RefreshGenerationHelp);
+        _convert.IsEnabled = presentation.ConvertEnabled;
+        _convert.Content = presentation.ConvertText;
+        SetActionHelp(_convert, presentation.ConvertHelp);
+        _refreshConversion.IsEnabled =
+            presentation.RefreshConversionEnabled;
+        SetActionHelp(
+            _refreshConversion,
+            presentation.RefreshConversionHelp);
+        _import.IsEnabled = presentation.ImportEnabled;
+        _import.Content = presentation.ImportText;
+        SetActionHelp(_import, presentation.ImportHelp);
+        _reset.IsEnabled = presentation.ResetEnabled;
+        SetActionHelp(_reset, presentation.ResetHelp);
+        _prompt.IsEnabled = presentation.PromptEnabled;
+        _faceLimit.IsEnabled = presentation.FaceLimitEnabled;
+        _withMaterials.IsEnabled = presentation.WithMaterialsEnabled;
+        _name.IsEnabled = presentation.NameEnabled;
+        _importMode.IsEnabled = presentation.ImportModeEnabled;
+        _applyMaterials.IsEnabled =
+            presentation.ApplyMaterialsEnabled;
+        if (state.PreparedConversion?.WithMaterials != true)
+        {
+            _applyMaterials.IsChecked = false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(
+                presentation.LatestPreparedOperationId) &&
+            !string.Equals(
+                _displayedPreparedOperationId,
+                presentation.LatestPreparedOperationId,
+                StringComparison.Ordinal))
+        {
+            _detailsExpander.IsExpanded = true;
+        }
+
+        _displayedPreparedOperationId =
+            presentation.LatestPreparedOperationId;
+        _displayedRecoveryToken = presentation.RecoveryToken;
     }
 
     private int ParseFaceLimit()
     {
-        if (!int.TryParse(
+        if (!Tripo.HostUi.TripoPanelPresentation.TryParseFaceLimit(
                 _faceLimit.Text,
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
                 out int faceLimit))
         {
             throw new ArgumentException(
@@ -675,6 +1113,27 @@ internal sealed class TripoRevitWindow : Window
 
         return faceLimit;
     }
+
+    private void EnsureApiKeyAvailable()
+    {
+        if (_session.State.CredentialStatus?.HasApiKey != true)
+        {
+            throw new InvalidOperationException(
+                "Configure a Tripo API key before continuing this workflow.");
+        }
+    }
+
+    private static bool CanInspectAmbiguousGenerationLocally(
+        Tripo.HostUi.TripoPanelState state) =>
+        state.GenerationDispatchAttempted &&
+        state.GenerationReceipt is null &&
+        state.GenerationOperationStatus?.TaskIdDurable != true;
+
+    private static bool CanInspectAmbiguousConversionLocally(
+        Tripo.HostUi.TripoPanelState state) =>
+        state.ConversionDispatchAttempted &&
+        state.ConversionReceipt is null &&
+        state.ConversionOperationStatus?.TaskIdDurable != true;
 
     private void ShowError(Exception exception)
     {
@@ -721,13 +1180,18 @@ internal sealed class TripoRevitWindow : Window
         _sessionDisposal = _session.DisposeAsync().AsTask();
     }
 
-    private static Button ActionButton(string content) =>
-        new()
+    private static Button ActionButton(string content)
+    {
+        Button button = new()
         {
             Content = content,
             Margin = new Thickness(0, 4, 8, 4),
-            Padding = new Thickness(10, 5, 10, 5),
+            MinHeight = 32,
+            Padding = new Thickness(12, 5, 12, 5),
         };
+        ToolTipService.SetShowOnDisabled(button, true);
+        return button;
+    }
 
     private static TextBlock StatusBlock() =>
         new()
@@ -736,32 +1200,123 @@ internal sealed class TripoRevitWindow : Window
             TextWrapping = TextWrapping.Wrap,
         };
 
+    private static TextBlock ValidationBlock()
+    {
+        TextBlock block = new()
+        {
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 2, 0, 5),
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+        };
+        AutomationProperties.SetLiveSetting(
+            block,
+            AutomationLiveSetting.Polite);
+        return block;
+    }
+
+    private static CheckBox WrappingCheckBox(
+        string text,
+        string? toolTip = null)
+    {
+        CheckBox checkBox = new()
+        {
+            Content = new TextBlock
+            {
+                Text = text,
+                TextWrapping = TextWrapping.Wrap,
+            },
+            Margin = new Thickness(0, 4, 0, 4),
+            ToolTip = toolTip,
+        };
+        AutomationProperties.SetName(checkBox, text);
+        ToolTipService.SetShowOnDisabled(checkBox, true);
+        return checkBox;
+    }
+
     private static TextBox OperationStatusBox() =>
         new()
         {
             IsReadOnly = true,
             IsReadOnlyCaretVisible = true,
             Margin = new Thickness(0, 5, 0, 5),
-            Padding = new Thickness(0),
-            BorderThickness = new Thickness(0),
+            Padding = new Thickness(5),
+            BorderBrush = SystemColors.ActiveBorderBrush,
+            BorderThickness = new Thickness(1),
             Background = Brushes.Transparent,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             TextWrapping = TextWrapping.Wrap,
         };
 
-    private static TextBlock SectionHeading(string text) =>
+    private static TextBox DiagnosticBox() =>
         new()
         {
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 14, 0, 6),
-            Text = text,
+            AcceptsReturn = true,
+            Height = 92,
+            IsReadOnly = true,
+            IsReadOnlyCaretVisible = true,
+            Padding = new Thickness(6),
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
 
-    private static StackPanel ButtonRow(params Button[] buttons)
+    private static TextBox RecoveryStatusBox()
     {
-        StackPanel panel = new()
+        TextBox status = DiagnosticBox();
+        status.Height = 170;
+        return status;
+    }
+
+    private static ProgressBar WorkflowProgressBar() =>
+        new()
         {
-            Orientation = Orientation.Horizontal,
+            Height = 8,
+            Margin = new Thickness(0, 3, 0, 5),
+            Maximum = 100,
+            Minimum = 0,
+            Visibility = Visibility.Collapsed,
         };
+
+    private static GroupBox Section(
+        string heading,
+        params UIElement[] children)
+    {
+        StackPanel content = new();
+        foreach (UIElement child in children)
+        {
+            content.Children.Add(child);
+        }
+
+        return new GroupBox
+        {
+            Header = heading,
+            Margin = new Thickness(0, 12, 0, 0),
+            Padding = new Thickness(10, 6, 10, 8),
+            Content = content,
+        };
+    }
+
+    private static StackPanel FieldBlock(string caption, Control control)
+    {
+        Label label = new()
+        {
+            Content = caption,
+            Padding = new Thickness(0),
+            Target = control,
+        };
+        AutomationProperties.SetLabeledBy(control, label);
+        StackPanel block = new()
+        {
+            Margin = new Thickness(0, 4, 0, 4),
+        };
+        block.Children.Add(label);
+        block.Children.Add(control);
+        return block;
+    }
+
+    private static WrapPanel ActionRow(params Button[] buttons)
+    {
+        WrapPanel panel = new();
         foreach (Button button in buttons)
         {
             panel.Children.Add(button);
@@ -770,25 +1325,119 @@ internal sealed class TripoRevitWindow : Window
         return panel;
     }
 
-    private static Grid FieldRow(string label, Control control)
+    private static Visibility VisibleWhen(bool visible) =>
+        visible ? Visibility.Visible : Visibility.Collapsed;
+
+    private static void SetActionHelp(Button button, string help)
     {
-        Grid grid = new()
+        button.ToolTip = help;
+        AutomationProperties.SetHelpText(button, help);
+    }
+
+    private static void SetLiveText(
+        TextBlock block,
+        string text,
+        Visibility? visibility = null)
+    {
+        Visibility nextVisibility = visibility ?? block.Visibility;
+        bool changed =
+            !string.Equals(block.Text, text, StringComparison.Ordinal) ||
+            block.Visibility != nextVisibility;
+        block.Text = text;
+        block.Visibility = nextVisibility;
+        if (!changed ||
+            !block.IsLoaded ||
+            !AutomationPeer.ListenerExists(
+                AutomationEvents.LiveRegionChanged))
         {
-            Margin = new Thickness(0, 4, 0, 4),
-        };
-        grid.ColumnDefinitions.Add(
-            new ColumnDefinition { Width = new GridLength(130) });
-        grid.ColumnDefinitions.Add(
-            new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        TextBlock caption = new()
+            return;
+        }
+
+        AutomationPeer? peer =
+            UIElementAutomationPeer.FromElement(block) ??
+            UIElementAutomationPeer.CreatePeerForElement(block);
+        peer?.RaiseAutomationEvent(
+            AutomationEvents.LiveRegionChanged);
+    }
+
+    private static void SetProgress(
+        ProgressBar progressBar,
+        int? reportedProgress,
+        string status)
+    {
+        bool valid = reportedProgress is >= 0 and <= 100;
+        progressBar.Visibility = VisibleWhen(valid);
+        if (valid)
         {
-            Text = label,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        Grid.SetColumn(control, 1);
-        grid.Children.Add(caption);
-        grid.Children.Add(control);
-        return grid;
+            progressBar.Value = reportedProgress!.Value;
+        }
+
+        AutomationProperties.SetName(
+            progressBar,
+            valid
+                ? $"{status}; {reportedProgress!.Value} percent"
+                : status);
+    }
+
+    private static string WorkflowIdentitySummary(
+        Tripo.HostUi.TripoPanelState state)
+    {
+        List<string> lines = [];
+        AddIdentity(
+            lines,
+            "Generation operation",
+            state.PreparedGeneration?.OperationId);
+        AddIdentity(
+            lines,
+            "Generation task",
+            state.GenerationReceipt?.TaskId ??
+            (state.GenerationOperationStatus is { TaskIdDurable: true }
+                ? state.GenerationOperationStatus.CreatedTaskId
+                : null));
+        AddIdentity(
+            lines,
+            "Conversion operation",
+            state.PreparedConversion?.OperationId);
+        AddIdentity(
+            lines,
+            "Conversion task",
+            state.ConversionReceipt?.ConversionTaskId ??
+            (state.ConversionOperationStatus is { TaskIdDurable: true }
+                ? state.ConversionOperationStatus.CreatedTaskId
+                : null));
+        AddIdentity(
+            lines,
+            "Import operation",
+            state.PreparedImport?.OperationId);
+        AddIdentity(
+            lines,
+            "Imported Revit object",
+            state.ImportReceipt?.HostReceipt.CreatedId);
+        return lines.Count == 0
+            ? "The current panel workflow state will be cleared."
+            : string.Join(Environment.NewLine, lines);
+    }
+
+    private static void AddIdentity(
+        ICollection<string> lines,
+        string label,
+        string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            lines.Add($"{label}: {value}");
+        }
+    }
+
+    private static string BoundSummary(string value)
+    {
+        string normalized = value
+            .Replace('\r', ' ')
+            .Replace('\n', ' ')
+            .Trim();
+        return normalized.Length <= 180
+            ? normalized
+            : normalized[..180] + "…";
     }
 
     private static string BoundMessage(string? message)
@@ -800,6 +1449,28 @@ internal sealed class TripoRevitWindow : Window
 
         string trimmed = message.Trim();
         return trimmed.Length <= 512 ? trimmed : trimmed[..512];
+    }
+
+    private sealed record ImportModeOption(
+        string Label,
+        string Value,
+        string Description)
+    {
+        public static IReadOnlyList<ImportModeOption> All { get; } =
+        [
+            new(
+                "Revit family (recommended)",
+                "family",
+                "Creates a Generic Models family, saves its .rfa, loads it, " +
+                "and places one instance at the project origin."),
+            new(
+                "DirectShape mesh",
+                "mesh",
+                "Creates one non-solid Generic Models DirectShape in the " +
+                "current project; no reusable family file is saved."),
+        ];
+
+        public override string ToString() => Label;
     }
 
     private sealed class RevitApiKeyDialog : Window
@@ -814,33 +1485,92 @@ internal sealed class TripoRevitWindow : Window
             IsChecked = true,
         };
 
-        public RevitApiKeyDialog()
+        public RevitApiKeyDialog(
+            bool recoveryMode,
+            bool exactOriginalKeyRequired)
         {
             Title = "Tripo API key";
-            Width = 500;
-            Height = 360;
-            ResizeMode = ResizeMode.NoResize;
+            MinWidth = 380;
+            Width = Math.Min(
+                540,
+                Math.Max(
+                    MinWidth,
+                    SystemParameters.WorkArea.Width - 48));
+            MaxHeight = Math.Max(
+                300,
+                SystemParameters.WorkArea.Height - 48);
+            ResizeMode = ResizeMode.CanResizeWithGrip;
+            ShowInTaskbar = false;
+            SizeToContent = SizeToContent.Height;
+            WindowStyle = WindowStyle.ToolWindow;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Button save = ActionButton("Save");
             Button cancel = ActionButton("Cancel");
+            save.IsDefault = true;
+            save.IsEnabled = false;
+            cancel.IsCancel = true;
             save.Click += (_, _) => DialogResult = true;
-            cancel.Click += (_, _) => DialogResult = false;
-            Content = new StackPanel
+            _password.PasswordChanged += (_, _) =>
+                save.IsEnabled =
+                    !string.IsNullOrWhiteSpace(_password.Password);
+            AutomationProperties.SetName(
+                _password,
+                "Tripo API key");
+
+            TextBlock linkText = new()
+            {
+                Margin = new Thickness(0, 0, 0, 12),
+            };
+            Hyperlink apiKeyLink = new(new Run("Open Tripo API key settings"))
+            {
+                NavigateUri =
+                    new Uri("https://platform.tripo3d.ai/api-keys"),
+            };
+            apiKeyLink.RequestNavigate += OpenExternalLink;
+            linkText.Inlines.Add(apiKeyLink);
+
+            StackPanel content = new()
             {
                 Margin = new Thickness(16),
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = ApiKeyInstructions,
-                        TextWrapping = TextWrapping.Wrap,
-                        Margin = new Thickness(0, 0, 0, 12),
-                    },
-                    _password,
-                    _persist,
-                    ButtonRow(save, cancel),
-                },
             };
+            content.Children.Add(new TextBlock
+            {
+                Text = ApiKeyInstructions,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            });
+            content.Children.Add(linkText);
+            if (recoveryMode)
+            {
+                _persist.IsChecked = false;
+                _persist.IsEnabled = false;
+                _persist.ToolTip =
+                    "Recovery credentials remain session-only until the " +
+                    "account-bound workflow is reconciled and explicitly reset.";
+                ToolTipService.SetShowOnDisabled(_persist, true);
+                content.Children.Add(new TextBlock
+                {
+                    FontWeight = FontWeights.SemiBold,
+                    Text =
+                        exactOriginalKeyRequired
+                            ? "Recovery mode: this key is session-only. Restore " +
+                              "the exact original key for the unresolved paid UUID."
+                            : "Recovery mode: this key is session-only. Use a key " +
+                              "for the same Tripo account as the unfinished workflow.",
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 0, 0, 8),
+                });
+            }
+
+            content.Children.Add(FieldBlock("API key", _password));
+            content.Children.Add(_persist);
+            content.Children.Add(ActionRow(save, cancel));
+            Content = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = content,
+            };
+            Loaded += (_, _) => Keyboard.Focus(_password);
         }
 
         public bool Persist => _persist.IsChecked == true;
@@ -853,62 +1583,182 @@ internal sealed class TripoRevitWindow : Window
         }
 
         public void ClearApiKey() => _password.Clear();
+
+        private static void OpenExternalLink(
+            object sender,
+            RequestNavigateEventArgs args)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(args.Uri.AbsoluteUri)
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(
+                    BoundMessage(exception.Message),
+                    "Could not open Tripo API key settings",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                args.Handled = true;
+            }
+        }
     }
 
     private sealed class RevitRecoveryAcknowledgeDialog : Window
     {
-        private readonly TextBox _confirmation = new();
+        private readonly CheckBox _paidReviewed = WrappingCheckBox(
+            "I reviewed every paid generation/conversion UUID against the " +
+            "local journal or provider history.");
+        private readonly CheckBox _importsReviewed = WrappingCheckBox(
+            "I manually reconciled every import UUID in the target Revit " +
+            "document.");
+        private readonly CheckBox _failedInspectionsReviewed =
+            WrappingCheckBox(
+                "I manually reconciled every paid UUID whose in-panel " +
+                "inspection failed.");
+        private readonly Button _acknowledge =
+            ActionButton("Archive reviewed hints");
+        private readonly bool _hasPaidIds;
+        private readonly bool _hasImportIds;
+        private readonly bool _inspectionHadFailures;
 
-        public RevitRecoveryAcknowledgeDialog()
+        public RevitRecoveryAcknowledgeDialog(
+            Tripo.HostUi.TripoPanelRecoveryLoadResult recovery,
+            bool inspectionHadFailures)
         {
+            _hasPaidIds = recovery.Hints.Any(
+                loaded =>
+                    loaded.Hint.Generation is not null ||
+                    loaded.Hint.Conversion is not null);
+            _hasImportIds = recovery.Hints.Any(
+                loaded => loaded.Hint.Import is not null);
+            _inspectionHadFailures = inspectionHadFailures;
             Title = "Acknowledge recovered Tripo IDs";
-            Width = 520;
-            Height = 260;
-            ResizeMode = ResizeMode.NoResize;
+            MinWidth = 400;
+            MinHeight = 300;
+            Width = Math.Min(
+                620,
+                Math.Max(
+                    MinWidth,
+                    SystemParameters.WorkArea.Width - 48));
+            Height = Math.Min(
+                520,
+                Math.Max(
+                    MinHeight,
+                    SystemParameters.WorkArea.Height - 48));
+            MaxHeight = Math.Max(
+                MinHeight,
+                SystemParameters.WorkArea.Height - 48);
+            ResizeMode = ResizeMode.CanResizeWithGrip;
+            ShowInTaskbar = false;
+            WindowStyle = WindowStyle.ToolWindow;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            Button acknowledge = ActionButton("Acknowledge");
             Button cancel = ActionButton("Cancel");
-            acknowledge.Click += (_, _) =>
+            _acknowledge.IsDefault = true;
+            _acknowledge.IsEnabled = false;
+            cancel.IsCancel = true;
+            _paidReviewed.Visibility = VisibleWhen(_hasPaidIds);
+            _importsReviewed.Visibility = VisibleWhen(_hasImportIds);
+            _failedInspectionsReviewed.Visibility =
+                VisibleWhen(_inspectionHadFailures);
+            _acknowledge.Click += (_, _) =>
             {
-                if (!string.Equals(
-                        _confirmation.Text,
-                        "RECONCILED",
-                        StringComparison.Ordinal))
+                if (CanAcknowledge())
                 {
-                    MessageBox.Show(
-                        this,
-                        "Type RECONCILED exactly after checking every recovered " +
-                        "UUID against the local journal or provider history.",
-                        "Recovery not acknowledged",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-                    return;
+                    DialogResult = true;
                 }
-
-                DialogResult = true;
             };
-            cancel.Click += (_, _) => DialogResult = false;
-            Content = new StackPanel
+            _paidReviewed.Checked += (_, _) => UpdateAcknowledgeState();
+            _paidReviewed.Unchecked += (_, _) => UpdateAcknowledgeState();
+            _importsReviewed.Checked += (_, _) => UpdateAcknowledgeState();
+            _importsReviewed.Unchecked += (_, _) =>
+                UpdateAcknowledgeState();
+            _failedInspectionsReviewed.Checked += (_, _) =>
+                UpdateAcknowledgeState();
+            _failedInspectionsReviewed.Unchecked += (_, _) =>
+                UpdateAcknowledgeState();
+
+            TextBox summary = DiagnosticBox();
+            summary.Height = 132;
+            summary.Text = RecoverySummary(recovery);
+            StackPanel content = new()
             {
                 Margin = new Thickness(16),
-                Children =
+            };
+            content.Children.Add(new TextBlock
+            {
+                Text =
+                    "Archiving these hints unlocks new operation UUIDs. It " +
+                    "does not cancel remote tasks or change Revit objects.",
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            });
+            content.Children.Add(
+                FieldBlock("Recovered IDs in this snapshot", summary));
+            content.Children.Add(_paidReviewed);
+            content.Children.Add(_importsReviewed);
+            content.Children.Add(_failedInspectionsReviewed);
+            content.Children.Add(ActionRow(_acknowledge, cancel));
+            Content = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = content,
+            };
+            Loaded += (_, _) =>
+            {
+                if (_hasPaidIds)
                 {
-                    new TextBlock
-                    {
-                        Text =
-                            "Archiving these recovery hints unlocks new " +
-                            "operation UUIDs. First check every paid UUID and " +
-                            "manually reconcile any import. Then type " +
-                            "RECONCILED.",
-                        TextWrapping = TextWrapping.Wrap,
-                        Margin = new Thickness(0, 0, 0, 12),
-                    },
-                    _confirmation,
-                    ButtonRow(acknowledge, cancel),
-                },
+                    Keyboard.Focus(_paidReviewed);
+                }
+                else if (_hasImportIds)
+                {
+                    Keyboard.Focus(_importsReviewed);
+                }
+                else
+                {
+                    Keyboard.Focus(_acknowledge);
+                }
             };
         }
 
-        public string Confirmation => _confirmation.Text;
+        public bool PaidResultsReviewed =>
+            _paidReviewed.IsChecked == true;
+
+        public bool ImportsReviewed =>
+            _importsReviewed.IsChecked == true;
+
+        public bool FailedInspectionsReviewed =>
+            _failedInspectionsReviewed.IsChecked == true;
+
+        private bool CanAcknowledge() =>
+            (!_hasPaidIds || _paidReviewed.IsChecked == true) &&
+            (!_hasImportIds || _importsReviewed.IsChecked == true) &&
+            (!_inspectionHadFailures ||
+             _failedInspectionsReviewed.IsChecked == true);
+
+        private void UpdateAcknowledgeState() =>
+            _acknowledge.IsEnabled = CanAcknowledge();
+
+        private static string RecoverySummary(
+            Tripo.HostUi.TripoPanelRecoveryLoadResult recovery)
+        {
+            List<string> lines = [];
+            foreach (
+                Tripo.HostUi.LoadedTripoPanelRecoveryHint loaded in
+                recovery.Hints)
+            {
+                lines.Add(
+                    Tripo.HostUi.TripoPanelPresentation
+                        .FormatRecoveryHint(loaded.Hint));
+            }
+
+            return string.Join(Environment.NewLine, lines);
+        }
     }
 }

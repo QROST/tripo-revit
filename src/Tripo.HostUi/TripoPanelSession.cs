@@ -79,19 +79,192 @@ public sealed record TripoPanelState(
 
     public bool HasUnresolvedPaidDispatch =>
         (GenerationDispatchAttempted &&
-         GenerationReceipt is null &&
-         GenerationOperationStatus?.TaskIdDurable != true) ||
+         DurableGenerationTaskId is null) ||
         (ConversionDispatchAttempted &&
-         ConversionReceipt is null &&
-         ConversionOperationStatus?.TaskIdDurable != true);
+         DurableConversionTaskId is null);
 
     public bool HasUnresolvedDispatch =>
         HasUnresolvedPaidDispatch ||
-        (ImportDispatchAttempted && ImportReceipt is null);
+        (ImportDispatchAttempted && !HasConfirmedImportReceipt);
+
+    public bool HasCredentialBoundWorkflow =>
+        GenerationDispatchAttempted ||
+        GenerationReceipt is not null ||
+        GenerationOperationStatus is not null ||
+        GenerationStatus is not null ||
+        ConversionDispatchAttempted ||
+        ConversionReceipt is not null ||
+        ConversionOperationStatus is not null ||
+        ConversionStatus is not null ||
+        ImportDispatchAttempted ||
+        ImportReceipt is not null;
+
+    public bool RequiresCredentialRecovery =>
+        HasCredentialBoundWorkflow;
+
+    public bool HasConfirmedImportReceipt
+    {
+        get
+        {
+            if (PreparedImport is null ||
+                ImportReceipt is null ||
+                Context is null)
+            {
+                return false;
+            }
+
+            return GetImportReceiptIssue(
+                       PreparedImport,
+                       ImportReceipt,
+                       Context) is null;
+        }
+    }
+
+    internal static string? GetImportReceiptIssue(
+        PreparedObjImport prepared,
+        Tripo.Bridge.HostControlObjTaskImportReceipt receipt,
+        Tripo.Bridge.HostContextReceipt context)
+    {
+        Tripo.Bridge.HostImportReceipt hostReceipt = receipt.HostReceipt;
+        if (hostReceipt.TransactionStatus is not
+                ("committed" or "already_exists"))
+        {
+            return "did not confirm a committed or existing host object";
+        }
+
+        string expectedMode = prepared.ImportMode == "native"
+            ? context.Host switch
+            {
+                "rhino" => "instance",
+                "revit" => "family",
+                _ => "unsupported-native-mode",
+            }
+            : prepared.ImportMode;
+        if (!string.Equals(
+                receipt.OperationId,
+                prepared.OperationId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                receipt.ConversionTaskId,
+                prepared.ConversionTaskId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                hostReceipt.Host,
+                context.Host,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                hostReceipt.DocumentSessionId,
+                prepared.DocumentSessionId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                hostReceipt.IdempotencyKey,
+                prepared.OperationId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                hostReceipt.ImportMode,
+                expectedMode,
+                StringComparison.Ordinal))
+        {
+            return "identity did not match the prepared operation";
+        }
+
+        if (string.IsNullOrWhiteSpace(hostReceipt.CreatedId) ||
+            hostReceipt.CreatedId.Length > 2048)
+        {
+            return "reported an invalid created-object ID";
+        }
+
+        if (hostReceipt.VertexCount <= 0 ||
+            hostReceipt.TriangleCount <= 0 ||
+            hostReceipt.RejectedTriangleCount < 0 ||
+            hostReceipt.MaterialCount < 0 ||
+            hostReceipt.TextureCount < 0 ||
+            receipt.ConversionCreditsConsumed is < 0)
+        {
+            return "reported invalid geometry, material, texture, or credit counts";
+        }
+
+        if (expectedMode == "family" &&
+            hostReceipt.TransactionStatus == "committed" &&
+            string.IsNullOrWhiteSpace(hostReceipt.SavedFamilyPath))
+        {
+            return "omitted the saved family path for a committed family import";
+        }
+
+        if (!string.IsNullOrWhiteSpace(hostReceipt.SavedFamilyPath) &&
+            (expectedMode != "family" ||
+             hostReceipt.SavedFamilyPath.Length > 4096 ||
+             !LooksLikeAbsoluteHostPath(hostReceipt.SavedFamilyPath) ||
+             (string.Equals(
+                  context.Host,
+                  "revit",
+                  StringComparison.Ordinal) &&
+              (!LooksLikeAbsoluteWindowsPath(hostReceipt.SavedFamilyPath) ||
+               !hostReceipt.SavedFamilyPath.EndsWith(
+                   ".rfa",
+                   StringComparison.OrdinalIgnoreCase)))))
+        {
+            return "reported a saved-family path inconsistent with the import mode";
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikeAbsoluteHostPath(string path) =>
+        path.StartsWith('/') ||
+        path.StartsWith(@"\\", StringComparison.Ordinal) ||
+        (path.Length >= 3 &&
+         char.IsLetter(path[0]) &&
+         path[1] == ':' &&
+         (path[2] == '\\' || path[2] == '/'));
+
+    private static bool LooksLikeAbsoluteWindowsPath(string path) =>
+        path.StartsWith(@"\\", StringComparison.Ordinal) ||
+        (path.Length >= 3 &&
+         char.IsLetter(path[0]) &&
+         path[1] == ':' &&
+         (path[2] == '\\' || path[2] == '/'));
+
+    public string? DurableGenerationTaskId =>
+        ResolveConsistentTaskId(
+            GenerationReceipt?.TaskId,
+            GenerationOperationStatus);
+
+    public string? DurableConversionTaskId =>
+        ResolveConsistentTaskId(
+            ConversionReceipt?.ConversionTaskId,
+            ConversionOperationStatus);
+
+    public bool GenerationStatusMatchesDurableTask =>
+        DurableGenerationTaskId is { } taskId &&
+        string.Equals(
+            GenerationStatus?.TaskId,
+            taskId,
+            StringComparison.Ordinal);
+
+    public bool ConversionStatusMatchesDurableTask =>
+        DurableConversionTaskId is { } taskId &&
+        string.Equals(
+            ConversionStatus?.TaskId,
+            taskId,
+            StringComparison.Ordinal);
+
+    public bool HasSuccessfulGeneration =>
+        GenerationStatusMatchesDurableTask &&
+        string.Equals(
+            GenerationStatus?.Status,
+            "success",
+            StringComparison.Ordinal);
+
+    public bool HasSuccessfulConversion =>
+        ConversionStatusMatchesDurableTask &&
+        string.Equals(
+            ConversionStatus?.Status,
+            "success",
+            StringComparison.Ordinal);
 
     public bool HasDurableGenerationTask =>
-        GenerationReceipt is not null ||
-        GenerationOperationStatus?.TaskIdDurable == true;
+        DurableGenerationTaskId is not null;
 
     public bool CanDispatchPreparedGeneration =>
         PreparedGeneration is not null &&
@@ -106,8 +279,7 @@ public sealed record TripoPanelState(
         GenerationOperationStatus?.CanResumeCreation == true;
 
     public bool HasDurableConversionTask =>
-        ConversionReceipt is not null ||
-        ConversionOperationStatus?.TaskIdDurable == true;
+        DurableConversionTaskId is not null;
 
     public bool CanDispatchPreparedConversion =>
         PreparedConversion is not null &&
@@ -123,24 +295,85 @@ public sealed record TripoPanelState(
 
     public bool CanDispatchPreparedImport =>
         PreparedImport is not null &&
-        ImportReceipt is null;
+        !HasConfirmedImportReceipt;
 
     public bool ImportRetryRequired =>
         CanDispatchPreparedImport &&
         ImportDispatchAttempted;
+
+    public bool HasNonTerminalRemoteTask =>
+        (HasDurableGenerationTask &&
+         !IsTerminalTaskStatus(
+             GenerationStatus,
+             DurableGenerationTaskId)) ||
+        (HasDurableConversionTask &&
+         !IsTerminalTaskStatus(
+             ConversionStatus,
+             DurableConversionTaskId));
+
+    private static bool IsTerminalTaskStatus(
+        Tripo.Bridge.HostControlTaskStatusReceipt? status,
+        string? expectedTaskId) =>
+        expectedTaskId is not null &&
+        string.Equals(
+            status?.TaskId,
+            expectedTaskId,
+            StringComparison.Ordinal) &&
+        status?.Status is
+            "success" or
+            "failed" or
+            "cancelled" or
+            "banned" or
+            "expired";
+
+    private static string? ResolveConsistentTaskId(
+        string? creationReceiptTaskId,
+        Tripo.Bridge.HostControlOperationStatusReceipt? operationStatus)
+    {
+        string? journalTaskId =
+            operationStatus?.TaskIdDurable == true
+                ? operationStatus.CreatedTaskId
+                : null;
+        if (creationReceiptTaskId is null)
+        {
+            return journalTaskId;
+        }
+
+        if (journalTaskId is null)
+        {
+            return creationReceiptTaskId;
+        }
+
+        return string.Equals(
+            creationReceiptTaskId,
+            journalTaskId,
+            StringComparison.Ordinal)
+                ? creationReceiptTaskId
+                : null;
+    }
 }
 
 public sealed class TripoPanelSession : IAsyncDisposable
 {
+    private const string GenerationOperationKind = "text_task_creation";
+    private const string ConversionOperationKind = "obj_conversion_creation";
+    private const string GenerationTaskType = "text_to_model";
+    private const string ConversionTaskType = "convert_model";
+
     private readonly Tripo.Bridge.IHostSidecarConnector _connector;
     private readonly TripoPanelRecoveryStore? _recoveryStore;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _stateGate = new();
+    private readonly Dictionary<
+        RecoveryInspectionKey,
+        RecoveryInspectionAttempt>
+        _recoveryInspectionAttempts = [];
     private Tripo.Bridge.IHostControlClient? _client;
     private TripoPanelState _state = TripoPanelState.Initial;
     private TripoPanelRecoveryLoadResult _recovery;
     private long _recoveryRevision;
+    private PendingRecoveryReview? _pendingRecoveryReview;
     private Task? _disposeTask;
     private volatile bool _disposed;
 
@@ -228,7 +461,16 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 using IDisposable? lease =
                     _recoveryStore?.AcquireCredentialWorkflowLease();
                 EnsureNoStaleRecovery();
-                EnsureCredentialMutationAllowed();
+                if (persist && State.RequiresCredentialRecovery)
+                {
+                    throw new InvalidOperationException(
+                        "A recovery API key must remain session-only until " +
+                        "the account-bound workflow is reconciled and " +
+                        "explicitly reset.");
+                }
+
+                EnsureCredentialMutationAllowed(
+                    allowCredentialRecovery: true);
                 Tripo.Bridge.IHostControlClient client = RequireClient();
                 Tripo.Bridge.HostControlCredentialMutationReceipt receipt =
                     await client.SetApiKeyAsync(apiKey, persist, token)
@@ -249,7 +491,8 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 using IDisposable? lease =
                     _recoveryStore?.AcquireCredentialWorkflowLease();
                 EnsureNoStaleRecovery();
-                EnsureCredentialMutationAllowed();
+                EnsureCredentialMutationAllowed(
+                    allowCredentialRecovery: false);
                 Tripo.Bridge.IHostControlClient client = RequireClient();
                 Tripo.Bridge.HostControlCredentialMutationReceipt receipt =
                     await client.ClearApiKeyAsync(token).ConfigureAwait(false);
@@ -360,10 +603,28 @@ public sealed class TripoPanelSession : IAsyncDisposable
                                     current.GenerationRetryRequired),
                             token)
                         .ConfigureAwait(false);
+                ValidateGenerationCreationReceipt(prepared, receipt);
+                Tripo.Bridge.HostControlOperationStatusReceipt
+                    journalStatus =
+                        await client.GetOperationStatusAsync(
+                                prepared.OperationId,
+                                token)
+                            .ConfigureAwait(false);
+                ValidateOperationStatus(
+                    journalStatus,
+                    prepared.OperationId,
+                    GenerationOperationKind,
+                    expectedSourceTaskId: null,
+                    "generation",
+                    receipt.TaskId);
+                ValidateOperationStatusTransition(
+                    current.GenerationOperationStatus,
+                    journalStatus,
+                    "generation");
                 UpdateState(state => state with
                 {
                     GenerationReceipt = receipt,
-                    GenerationOperationStatus = null,
+                    GenerationOperationStatus = journalStatus,
                     LastError = null,
                 });
             },
@@ -382,6 +643,11 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 Tripo.Bridge.HostControlTaskStatusReceipt status =
                     await client.GetTaskStatusAsync(taskId, token)
                         .ConfigureAwait(false);
+                ValidateTaskStatus(
+                    status,
+                    taskId,
+                    GenerationTaskType,
+                    "generation");
                 UpdateState(state => state with
                 {
                     GenerationStatus = status,
@@ -400,7 +666,10 @@ public sealed class TripoPanelSession : IAsyncDisposable
             EnsureNoStaleRecovery();
             ValidateFaceLimit(faceLimit);
             TripoPanelState state = State;
-            EnsureSuccessfulTask(state.GenerationStatus, "generation");
+            string generationTaskId = RequireSuccessfulTask(
+                state.GenerationStatus,
+                state.DurableGenerationTaskId,
+                "generation");
             if (state.PreparedConversion is not null ||
                 state.ConversionDispatchAttempted ||
                 state.ConversionReceipt is not null ||
@@ -413,7 +682,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
             }
 
             PreparedObjConversion prepared = new(
-                state.GenerationStatus!.TaskId,
+                generationTaskId,
                 faceLimit,
                 withMaterials,
                 state.PreparedGeneration!.DocumentSessionId,
@@ -487,10 +756,28 @@ public sealed class TripoPanelSession : IAsyncDisposable
                                     current.ConversionRetryRequired),
                             token)
                         .ConfigureAwait(false);
+                ValidateConversionCreationReceipt(prepared, receipt);
+                Tripo.Bridge.HostControlOperationStatusReceipt
+                    journalStatus =
+                        await client.GetOperationStatusAsync(
+                                prepared.OperationId,
+                                token)
+                            .ConfigureAwait(false);
+                ValidateOperationStatus(
+                    journalStatus,
+                    prepared.OperationId,
+                    ConversionOperationKind,
+                    prepared.SourceTaskId,
+                    "conversion",
+                    receipt.ConversionTaskId);
+                ValidateOperationStatusTransition(
+                    current.ConversionOperationStatus,
+                    journalStatus,
+                    "conversion");
                 UpdateState(state => state with
                 {
                     ConversionReceipt = receipt,
-                    ConversionOperationStatus = null,
+                    ConversionOperationStatus = journalStatus,
                     LastError = null,
                 });
             },
@@ -509,6 +796,11 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 Tripo.Bridge.HostControlTaskStatusReceipt status =
                     await client.GetTaskStatusAsync(taskId, token)
                         .ConfigureAwait(false);
+                ValidateTaskStatus(
+                    status,
+                    taskId,
+                    ConversionTaskType,
+                    "conversion");
                 UpdateState(state => state with
                 {
                     ConversionStatus = status,
@@ -529,7 +821,10 @@ public sealed class TripoPanelSession : IAsyncDisposable
             ValidateName(name);
             string normalizedMode = ValidateImportMode(importMode);
             TripoPanelState state = State;
-            EnsureSuccessfulTask(state.ConversionStatus, "conversion");
+            string conversionTaskId = RequireSuccessfulTask(
+                state.ConversionStatus,
+                state.DurableConversionTaskId,
+                "conversion");
             if (state.PreparedImport is not null ||
                 state.ImportDispatchAttempted ||
                 state.ImportReceipt is not null)
@@ -540,7 +835,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
             }
 
             PreparedObjImport prepared = new(
-                state.ConversionStatus!.TaskId,
+                conversionTaskId,
                 name,
                 state.PreparedConversion!.DocumentSessionId,
                 Guid.NewGuid().ToString("D"),
@@ -601,6 +896,13 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 UpdateState(state => state with
                 {
                     ImportReceipt = receipt,
+                });
+                ValidateImportReceipt(
+                    prepared,
+                    receipt,
+                    RequireContext());
+                UpdateState(state => state with
+                {
                     LastError = null,
                 });
             },
@@ -612,12 +914,20 @@ public sealed class TripoPanelSession : IAsyncDisposable
         try
         {
             EnsureNoStaleRecovery();
-            if (State.HasUnresolvedDispatch)
+            TripoPanelState current = State;
+            if (current.HasUnresolvedDispatch)
             {
                 throw new InvalidOperationException(
                     "This panel has an unresolved dispatched operation. Keep its " +
                     "displayed operation ID and use Refresh or retry the same stage; " +
                     "a new workflow cannot discard that recovery identity.");
+            }
+
+            if (current.HasNonTerminalRemoteTask)
+            {
+                throw new InvalidOperationException(
+                    "Refresh every accepted remote task until it reaches a " +
+                    "terminal status before starting a new workflow.");
             }
 
             UpdateState(state => state with
@@ -647,6 +957,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
     public async Task<Tripo.Bridge.HostControlOperationStatusReceipt>
         InspectPaidRecoveryAsync(
             string operationId,
+            string stage,
             CancellationToken cancellationToken = default)
     {
         if (!Guid.TryParseExact(operationId, "D", out Guid parsed) ||
@@ -660,117 +971,324 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 nameof(operationId));
         }
 
+        string expectedKind = stage switch
+        {
+            "generation" => GenerationOperationKind,
+            "conversion" => ConversionOperationKind,
+            _ => throw new ArgumentException(
+                "stage must be generation or conversion.",
+                nameof(stage)),
+        };
+        string recoveryToken;
+        bool belongsToDisplayedRecovery;
+        string? expectedSourceTaskId;
+        string? expectedCreatedTaskId;
+        string? persistedJournalState;
+        Tripo.Bridge.HostControlOperationStatusReceipt?
+            previouslyInspectedStatus;
+        lock (_stateGate)
+        {
+            recoveryToken = _recovery.PresentationToken;
+            DisplayedRecoveryPaidOperation? displayed =
+                FindRecoveryPaidOperation(
+                    _recovery,
+                    operationId,
+                    stage);
+            belongsToDisplayedRecovery = displayed is not null;
+            expectedSourceTaskId = displayed?.ExpectedSourceTaskId;
+            expectedCreatedTaskId =
+                displayed?.Hint.TaskIdDurable == true
+                    ? displayed.Hint.TaskId
+                    : null;
+            persistedJournalState = displayed?.Hint.JournalState;
+            previouslyInspectedStatus =
+                _recoveryInspectionAttempts.TryGetValue(
+                    new RecoveryInspectionKey(
+                        recoveryToken,
+                        operationId,
+                        stage),
+                    out RecoveryInspectionAttempt? previousAttempt)
+                    ? previousAttempt.Status
+                    : null;
+        }
+
         Tripo.Bridge.HostControlOperationStatusReceipt? receipt = null;
-        await RunExclusiveAsync(
-                async token =>
-                {
-                    receipt = await RequireClient()
-                        .GetOperationStatusAsync(operationId, token)
-                        .ConfigureAwait(false);
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            await RunExclusiveAsync(
+                    async token =>
+                    {
+                        receipt = await RequireClient()
+                            .GetOperationStatusAsync(operationId, token)
+                            .ConfigureAwait(false);
+                        ValidateOperationStatus(
+                            receipt,
+                            operationId,
+                            expectedKind,
+                            expectedSourceTaskId,
+                            stage,
+                            expectedCreatedTaskId);
+                        if (belongsToDisplayedRecovery)
+                        {
+                            if (previouslyInspectedStatus is not null)
+                            {
+                                ValidateOperationStatusTransition(
+                                    previouslyInspectedStatus,
+                                    receipt,
+                                    stage);
+                            }
+                            else
+                            {
+                                ValidateOperationStateTransition(
+                                    persistedJournalState,
+                                    previousUpdatedAtUtc: null,
+                                    receipt,
+                                    stage);
+                            }
+                        }
+                    },
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (belongsToDisplayedRecovery)
+            {
+                RecordRecoveryInspection(
+                    recoveryToken,
+                    operationId,
+                    stage,
+                    succeeded: true,
+                    receipt);
+            }
+        }
+        catch
+        {
+            if (belongsToDisplayedRecovery)
+            {
+                RecordRecoveryInspection(
+                    recoveryToken,
+                    operationId,
+                    stage,
+                    succeeded: false,
+                    status: null);
+            }
+
+            throw;
+        }
+
         return receipt ??
             throw new InvalidOperationException(
                 "The paid-operation inspection returned no receipt.");
     }
 
-    public void AcknowledgeRecoveredOperations(
-        string confirmation,
-        string displayedRecoveryToken)
+    public async Task<string> CreateRecoveryReviewReceiptAsync(
+        string displayedRecoveryToken,
+        bool paidResultsReviewed,
+        bool importsReviewed,
+        bool failedInspectionsReviewed,
+        CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (!string.Equals(
-                confirmation,
-                "RECONCILED",
-                StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "Type RECONCILED exactly after checking every recovered UUID.");
-        }
-
         if (string.IsNullOrWhiteSpace(displayedRecoveryToken))
         {
             throw new InvalidOperationException(
-                "The panel has no rendered recovery snapshot to acknowledge.");
+                "The panel has no rendered recovery snapshot to review.");
+        }
+
+        string? reviewReceiptId = null;
+        await RunExclusiveAsync(
+            async token =>
+            {
+                List<RecoveryInspectionCheck> successfulChecks = [];
+                lock (_stateGate)
+                {
+                    if (_state.HasWorkflowState)
+                    {
+                        throw new InvalidOperationException(
+                            "Start with an empty panel before completing a " +
+                            "recovery review.");
+                    }
+
+                    TripoPanelRecoveryLoadResult recovery = _recovery;
+                    if (!string.Equals(
+                            displayedRecoveryToken,
+                            recovery.PresentationToken,
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "The recovered operation list changed. Inspect the " +
+                            "refreshed list again.");
+                    }
+
+                    bool hasPaid = false;
+                    bool hasFailedInspection = false;
+                    foreach (
+                        LoadedTripoPanelRecoveryHint loaded in
+                        recovery.Hints)
+                    {
+                        AddRecoveryInspectionCheck(
+                            successfulChecks,
+                            recovery.PresentationToken,
+                            loaded.Hint.Generation,
+                            "generation",
+                            expectedSourceTaskId: null,
+                            ref hasPaid,
+                            ref hasFailedInspection);
+                        AddRecoveryInspectionCheck(
+                            successfulChecks,
+                            recovery.PresentationToken,
+                            loaded.Hint.Conversion,
+                            "conversion",
+                            loaded.Hint.Generation?.TaskId,
+                            ref hasPaid,
+                            ref hasFailedInspection);
+                    }
+
+                    bool hasImports = recovery.Hints.Any(
+                        loaded => loaded.Hint.Import is not null);
+                    if (hasPaid && !paidResultsReviewed)
+                    {
+                        throw new InvalidOperationException(
+                            "Confirm that every paid inspection result was reviewed.");
+                    }
+
+                    if (hasImports && !importsReviewed)
+                    {
+                        throw new InvalidOperationException(
+                            "Confirm manual reconciliation of every recovered import.");
+                    }
+
+                    if (hasFailedInspection &&
+                        !failedInspectionsReviewed)
+                    {
+                        throw new InvalidOperationException(
+                            "Confirm manual reconciliation of every failed paid " +
+                            "inspection.");
+                    }
+                }
+
+                Tripo.Bridge.IHostControlClient client = RequireClient();
+                foreach (RecoveryInspectionCheck check in successfulChecks)
+                {
+                    Tripo.Bridge.HostControlOperationStatusReceipt current =
+                        await client.GetOperationStatusAsync(
+                                check.OperationId,
+                                token)
+                            .ConfigureAwait(false);
+                    ValidateOperationStatus(
+                        current,
+                        check.OperationId,
+                        check.ExpectedKind,
+                        check.ExpectedSourceTaskId,
+                        check.Stage,
+                        check.ExpectedCreatedTaskId);
+                    if (!Equals(current, check.ObservedStatus))
+                    {
+                        throw new InvalidOperationException(
+                            "A paid-operation journal entry changed after " +
+                            "inspection. Inspect the refreshed evidence again.");
+                    }
+                }
+
+                lock (_stateGate)
+                {
+                    if (!string.Equals(
+                            displayedRecoveryToken,
+                            _recovery.PresentationToken,
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "The recovered operation list changed. Inspect the " +
+                            "refreshed list again.");
+                    }
+
+                    reviewReceiptId = Guid.NewGuid().ToString("D");
+                    _pendingRecoveryReview = new PendingRecoveryReview(
+                        reviewReceiptId,
+                        displayedRecoveryToken,
+                        successfulChecks.ToArray());
+                }
+            },
+            cancellationToken).ConfigureAwait(false);
+        return reviewReceiptId ??
+            throw new InvalidOperationException(
+                "The recovery review returned no receipt.");
+    }
+
+    public Task AcknowledgeRecoveredOperationsAsync(
+        string reviewReceiptId,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (string.IsNullOrWhiteSpace(reviewReceiptId))
+        {
+            throw new InvalidOperationException(
+                "Complete the current recovery review before acknowledgement.");
         }
 
         TripoPanelRecoveryStore store =
             _recoveryStore ??
             throw new InvalidOperationException(
                 "This panel has no recovery store.");
-        if (!_operationGate.Wait(0))
-        {
-            throw new InvalidOperationException(
-                "Wait for the current panel operation to finish before " +
-                "acknowledging recovered operations.");
-        }
 
-        try
-        {
-            TripoPanelRecoveryLoadResult notification =
-                TripoPanelRecoveryLoadResult.Empty;
-            bool notify = false;
-            try
+        return RunExclusiveAsync(
+            async token =>
             {
+                PendingRecoveryReview review;
                 lock (_stateGate)
                 {
-                    if (_state.Busy || _state.HasWorkflowState)
+                    if (_state.HasWorkflowState)
                     {
                         throw new InvalidOperationException(
-                            "Start with an empty, idle panel before acknowledging " +
+                            "Start with an empty panel before acknowledging " +
                             "recovered operations.");
                     }
 
-                    TripoPanelRecoveryLoadResult current = store.LoadStale();
-                    _recovery = current;
-                    _recoveryRevision++;
-                    notification = current;
-                    notify = true;
+                    review =
+                        _pendingRecoveryReview ??
+                        throw new InvalidOperationException(
+                            "Complete the current recovery review before " +
+                            "acknowledgement.");
+                    _pendingRecoveryReview = null;
                     if (!string.Equals(
-                            displayedRecoveryToken,
-                            current.PresentationToken,
+                            review.ReceiptId,
+                            reviewReceiptId,
                             StringComparison.Ordinal))
                     {
                         throw new InvalidOperationException(
-                            "The recovered operation list changed. Review the " +
-                            "refreshed list before typing RECONCILED again.");
-                    }
-
-                    if (current.Issues.Count > 0)
-                    {
-                        throw new InvalidOperationException(
-                            "Invalid recovery files must be inspected and moved aside " +
-                            "manually; the panel will not overwrite or archive them.");
-                    }
-
-                    try
-                    {
-                        foreach (LoadedTripoPanelRecoveryHint hint in current.Hints)
-                        {
-                            store.Archive(hint);
-                        }
-                    }
-                    finally
-                    {
-                        notification = store.LoadStale();
-                        _recovery = notification;
-                        _recoveryRevision++;
+                            "The recovery review receipt is invalid or already used.");
                     }
                 }
-            }
-            finally
-            {
-                if (notify)
+
+                TripoPanelRecoveryLoadResult current = store.LoadStale();
+                PublishRecovery(current);
+                ValidateRecoverySnapshotForArchive(
+                    review.RecoveryToken,
+                    current);
+
+                await RevalidateRecoveryChecksAsync(
+                        RequireClient(),
+                        review.SuccessfulChecks,
+                        token)
+                    .ConfigureAwait(false);
+
+                current = store.LoadStale();
+                PublishRecovery(current);
+                ValidateRecoverySnapshotForArchive(
+                    review.RecoveryToken,
+                    current);
+
+                try
                 {
-                    RecoveryChanged?.Invoke(this, notification);
+                    foreach (LoadedTripoPanelRecoveryHint hint in current.Hints)
+                    {
+                        store.Archive(hint);
+                    }
                 }
-            }
-        }
-        finally
-        {
-            _operationGate.Release();
-        }
+                finally
+                {
+                    PublishRecovery(store.LoadStale());
+                }
+            },
+            cancellationToken);
     }
 
     public TripoPanelRecoveryLoadResult RefreshRecovery()
@@ -794,6 +1312,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
 
             _recovery = next;
             _recoveryRevision++;
+            _pendingRecoveryReview = null;
         }
 
         RecoveryChanged?.Invoke(this, next);
@@ -861,18 +1380,22 @@ public sealed class TripoPanelSession : IAsyncDisposable
         }
     }
 
-    private void EnsureCredentialMutationAllowed()
+    private void EnsureCredentialMutationAllowed(
+        bool allowCredentialRecovery)
     {
-        if (State.HasUnresolvedPaidDispatch)
+        TripoPanelState state = State;
+        if (state.HasCredentialBoundWorkflow &&
+            !allowCredentialRecovery)
         {
             throw new InvalidOperationException(
-                "The API key cannot change while a paid operation has an " +
-                "unresolved dispatch. Reconcile it with Refresh or retry the " +
-                "same operation ID first.");
+                "The API key cannot change or be cleared while an " +
+                "account-bound workflow remains active. Refresh it to a " +
+                "terminal status or reconcile it, then explicitly reset first.");
         }
 
         TripoPanelRecoveryLoadResult global =
-            _recoveryStore?.LoadCredentialMutationBlocks() ??
+            _recoveryStore?.LoadCredentialMutationBlocks(
+                excludeCurrentStoreHint: true) ??
             TripoPanelRecoveryLoadResult.Empty;
         if (global.HasBlock)
         {
@@ -1003,6 +1526,18 @@ public sealed class TripoPanelSession : IAsyncDisposable
                     prepared.OperationId,
                     cancellationToken)
                 .ConfigureAwait(false);
+        ValidateOperationStatus(
+            operationStatus,
+            prepared.OperationId,
+            GenerationOperationKind,
+            expectedSourceTaskId: null,
+            "generation",
+            state.DurableGenerationTaskId ??
+            state.GenerationStatus?.TaskId);
+        ValidateOperationStatusTransition(
+            state.GenerationOperationStatus,
+            operationStatus,
+            "generation");
         UpdateState(current => current with
         {
             GenerationOperationStatus = operationStatus,
@@ -1035,6 +1570,18 @@ public sealed class TripoPanelSession : IAsyncDisposable
                     prepared.OperationId,
                     cancellationToken)
                 .ConfigureAwait(false);
+        ValidateOperationStatus(
+            operationStatus,
+            prepared.OperationId,
+            ConversionOperationKind,
+            prepared.SourceTaskId,
+            "conversion",
+            state.DurableConversionTaskId ??
+            state.ConversionStatus?.TaskId);
+        ValidateOperationStatusTransition(
+            state.ConversionOperationStatus,
+            operationStatus,
+            "conversion");
         UpdateState(current => current with
         {
             ConversionOperationStatus = operationStatus,
@@ -1056,6 +1603,428 @@ public sealed class TripoPanelSession : IAsyncDisposable
             $"The {stage} operation is {status.State}; its task ID is not " +
             $"durable. {status.NextAction}");
     }
+
+    private static void ValidateGenerationCreationReceipt(
+        PreparedTextGeneration prepared,
+        Tripo.Bridge.HostControlTextTaskCreationReceipt receipt)
+    {
+        if (!string.Equals(
+                receipt.OperationId,
+                prepared.OperationId,
+                StringComparison.Ordinal) ||
+            !IsValidTaskId(receipt.TaskId))
+        {
+            throw new InvalidOperationException(
+                "The generation creation receipt did not match the prepared " +
+                "operation or contain a valid Tripo task ID. Preserve the UUID " +
+                "and inspect the journal.");
+        }
+    }
+
+    private static void ValidateConversionCreationReceipt(
+        PreparedObjConversion prepared,
+        Tripo.Bridge.HostControlObjConversionCreationReceipt receipt)
+    {
+        if (!string.Equals(
+                receipt.OperationId,
+                prepared.OperationId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                receipt.SourceTaskId,
+                prepared.SourceTaskId,
+                StringComparison.Ordinal) ||
+            !IsValidTaskId(receipt.ConversionTaskId) ||
+            !string.Equals(receipt.Format, "OBJ", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The conversion creation receipt did not match the prepared " +
+                "operation, source task, Tripo task-ID format, or OBJ format. " +
+                "Preserve the UUID and inspect the journal.");
+        }
+    }
+
+    private static void ValidateOperationStatus(
+        Tripo.Bridge.HostControlOperationStatusReceipt status,
+        string expectedOperationId,
+        string expectedKind,
+        string? expectedSourceTaskId,
+        string stage,
+        string? expectedCreatedTaskId = null)
+    {
+        bool prepared = string.Equals(
+            status.State,
+            "prepared",
+            StringComparison.Ordinal);
+        bool operationInProgress = string.Equals(
+            status.State,
+            "operation_in_progress",
+            StringComparison.Ordinal);
+        bool dispatching = string.Equals(
+            status.State,
+            "dispatching",
+            StringComparison.Ordinal);
+        bool taskIdPersisted = string.Equals(
+            status.State,
+            "task_id_persisted",
+            StringComparison.Ordinal);
+        bool outcomeUnknown = string.Equals(
+            status.State,
+            "outcome_unknown",
+            StringComparison.Ordinal);
+        bool knownState =
+            prepared ||
+            operationInProgress ||
+            dispatching ||
+            taskIdPersisted ||
+            outcomeUnknown;
+        bool stateMayHaveCreatedRemoteTask =
+            operationInProgress ||
+            dispatching ||
+            taskIdPersisted ||
+            outcomeUnknown;
+
+        if (!string.Equals(
+                status.OperationId,
+                expectedOperationId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                status.Kind,
+                expectedKind,
+                StringComparison.Ordinal) ||
+            (expectedKind == GenerationOperationKind &&
+             status.SourceTaskId is not null) ||
+            (expectedSourceTaskId is not null &&
+             !string.Equals(
+                 status.SourceTaskId,
+                 expectedSourceTaskId,
+                 StringComparison.Ordinal)) ||
+            !knownState ||
+            status.TaskIdDurable != taskIdPersisted ||
+            status.MayHaveCreatedRemoteTask !=
+                stateMayHaveCreatedRemoteTask ||
+            status.CanResumeCreation != prepared ||
+            status.TaskIdDurable !=
+                !string.IsNullOrWhiteSpace(status.CreatedTaskId) ||
+            (expectedCreatedTaskId is not null &&
+             (!status.TaskIdDurable ||
+              !string.Equals(
+                  status.CreatedTaskId,
+                  expectedCreatedTaskId,
+                  StringComparison.Ordinal))) ||
+            (status.TaskIdDurable &&
+             (!IsValidTaskId(status.CreatedTaskId) ||
+              !status.MayHaveCreatedRemoteTask)))
+        {
+            throw new InvalidOperationException(
+                $"The {stage} operation-status receipt did not match the " +
+                "requested UUID, kind, source task, or journal-state " +
+                "semantics. Preserve the UUID and inspect the journal.");
+        }
+    }
+
+    private static void ValidateOperationStatusTransition(
+        Tripo.Bridge.HostControlOperationStatusReceipt? previous,
+        Tripo.Bridge.HostControlOperationStatusReceipt current,
+        string stage)
+    {
+        ValidateOperationStateTransition(
+            previous?.State,
+            previous?.UpdatedAtUtc,
+            current,
+            stage);
+    }
+
+    private static void ValidateOperationStateTransition(
+        string? previousState,
+        DateTimeOffset? previousUpdatedAtUtc,
+        Tripo.Bridge.HostControlOperationStatusReceipt current,
+        string stage)
+    {
+        if (previousState is null)
+        {
+            return;
+        }
+
+        bool allowed = previousState switch
+        {
+            "prepared" => current.State is
+                "prepared" or
+                "operation_in_progress" or
+                "dispatching" or
+                "task_id_persisted" or
+                "outcome_unknown",
+            "operation_in_progress" => current.State is
+                "prepared" or
+                "operation_in_progress" or
+                "dispatching" or
+                "task_id_persisted" or
+                "outcome_unknown",
+            "dispatching" => current.State is
+                "dispatching" or
+                "task_id_persisted" or
+                "outcome_unknown",
+            "task_id_persisted" =>
+                current.State == "task_id_persisted",
+            "outcome_unknown" =>
+                current.State == "outcome_unknown",
+            _ => false,
+        };
+        if (!allowed ||
+            (previousUpdatedAtUtc.HasValue &&
+             current.UpdatedAtUtc < previousUpdatedAtUtc.Value))
+        {
+            throw new InvalidOperationException(
+                $"The {stage} paid-operation journal regressed from " +
+                $"{previousState} to {current.State}. Preserve the UUID and " +
+                "do not resend the paid request.");
+        }
+    }
+
+    private static bool IsValidTaskId(string? taskId)
+    {
+        if (string.IsNullOrWhiteSpace(taskId) ||
+            taskId.Length is < 8 or > 133 ||
+            !taskId.StartsWith("task_", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        for (int index = 5; index < taskId.Length; index++)
+        {
+            char character = taskId[index];
+            bool allowed =
+                character is >= 'A' and <= 'Z' or
+                >= 'a' and <= 'z' or
+                >= '0' and <= '9' or
+                '_' or '-';
+            if (!allowed)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void ValidateTaskStatus(
+        Tripo.Bridge.HostControlTaskStatusReceipt status,
+        string expectedTaskId,
+        string expectedType,
+        string stage)
+    {
+        if (!string.Equals(
+                status.TaskId,
+                expectedTaskId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                status.Type,
+                expectedType,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"The {stage} task-status receipt did not match the requested " +
+                "task ID or task type. The stage remains unconfirmed.");
+        }
+    }
+
+    private void RecordRecoveryInspection(
+        string recoveryToken,
+        string operationId,
+        string stage,
+        bool succeeded,
+        Tripo.Bridge.HostControlOperationStatusReceipt? status)
+    {
+        lock (_stateGate)
+        {
+            if (!string.Equals(
+                    recoveryToken,
+                    _recovery.PresentationToken,
+                    StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _recoveryInspectionAttempts[
+                new RecoveryInspectionKey(
+                    recoveryToken,
+                    operationId,
+                    stage)] = new RecoveryInspectionAttempt(
+                        succeeded,
+                        status);
+            _pendingRecoveryReview = null;
+        }
+    }
+
+    private static async Task RevalidateRecoveryChecksAsync(
+        Tripo.Bridge.IHostControlClient client,
+        IReadOnlyList<RecoveryInspectionCheck> checks,
+        CancellationToken cancellationToken)
+    {
+        foreach (RecoveryInspectionCheck check in checks)
+        {
+            Tripo.Bridge.HostControlOperationStatusReceipt current =
+                await client.GetOperationStatusAsync(
+                        check.OperationId,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            ValidateOperationStatus(
+                current,
+                check.OperationId,
+                check.ExpectedKind,
+                check.ExpectedSourceTaskId,
+                check.Stage,
+                check.ExpectedCreatedTaskId);
+            if (!Equals(current, check.ObservedStatus))
+            {
+                throw new InvalidOperationException(
+                    "A paid-operation journal entry changed after inspection. " +
+                    "Inspect the refreshed evidence again.");
+            }
+        }
+    }
+
+    private static void ValidateRecoverySnapshotForArchive(
+        string expectedToken,
+        TripoPanelRecoveryLoadResult current)
+    {
+        if (!string.Equals(
+                expectedToken,
+                current.PresentationToken,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The recovered operation list changed. Review the refreshed " +
+                "list and complete the review again.");
+        }
+
+        if (current.Issues.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Invalid recovery files must be inspected and moved aside " +
+                "manually; the panel will not overwrite or archive them.");
+        }
+    }
+
+    private void PublishRecovery(TripoPanelRecoveryLoadResult recovery)
+    {
+        lock (_stateGate)
+        {
+            _recovery = recovery;
+            _recoveryRevision++;
+        }
+
+        RecoveryChanged?.Invoke(this, recovery);
+    }
+
+    private void AddRecoveryInspectionCheck(
+        List<RecoveryInspectionCheck> successfulChecks,
+        string recoveryToken,
+        TripoPanelPaidRecoveryHint? hint,
+        string stage,
+        string? expectedSourceTaskId,
+        ref bool hasPaid,
+        ref bool hasFailedInspection)
+    {
+        if (hint is null)
+        {
+            return;
+        }
+
+        hasPaid = true;
+        if (!_recoveryInspectionAttempts.TryGetValue(
+                new RecoveryInspectionKey(
+                    recoveryToken,
+                    hint.OperationId,
+                    stage),
+                out RecoveryInspectionAttempt? attempt))
+        {
+            throw new InvalidOperationException(
+                $"Inspect the recovered {stage} UUID before completing the review.");
+        }
+
+        hasFailedInspection |= !attempt.Succeeded;
+        if (attempt.Succeeded)
+        {
+            successfulChecks.Add(
+                new RecoveryInspectionCheck(
+                    hint.OperationId,
+                    stage,
+                    stage == "generation"
+                        ? GenerationOperationKind
+                        : ConversionOperationKind,
+                    expectedSourceTaskId,
+                    hint.TaskIdDurable
+                        ? hint.TaskId
+                        : null,
+                    attempt.Status ??
+                    throw new InvalidOperationException(
+                        "The paid inspection retained no status receipt.")));
+        }
+    }
+
+    private static DisplayedRecoveryPaidOperation?
+        FindRecoveryPaidOperation(
+        TripoPanelRecoveryLoadResult recovery,
+        string operationId,
+        string stage)
+    {
+        List<DisplayedRecoveryPaidOperation> matches = [];
+        foreach (LoadedTripoPanelRecoveryHint loaded in recovery.Hints)
+        {
+            TripoPanelPaidRecoveryHint? hint =
+                stage == "generation"
+                    ? loaded.Hint.Generation
+                    : loaded.Hint.Conversion;
+            if (hint is not null &&
+                string.Equals(
+                    hint.OperationId,
+                    operationId,
+                    StringComparison.Ordinal))
+            {
+                matches.Add(
+                    new DisplayedRecoveryPaidOperation(
+                        hint,
+                        stage == "conversion"
+                            ? loaded.Hint.Generation?.TaskId
+                            : null));
+            }
+        }
+
+        return matches.Count switch
+        {
+            0 => null,
+            1 => matches[0],
+            _ => throw new InvalidOperationException(
+                "The recovery set contains a duplicate paid-operation UUID. " +
+                "Resolve the recovery files manually."),
+        };
+    }
+
+    private sealed record DisplayedRecoveryPaidOperation(
+        TripoPanelPaidRecoveryHint Hint,
+        string? ExpectedSourceTaskId);
+
+    private sealed record RecoveryInspectionKey(
+        string RecoveryToken,
+        string OperationId,
+        string Stage);
+
+    private sealed record RecoveryInspectionAttempt(
+        bool Succeeded,
+        Tripo.Bridge.HostControlOperationStatusReceipt? Status);
+
+    private sealed record RecoveryInspectionCheck(
+        string OperationId,
+        string Stage,
+        string ExpectedKind,
+        string? ExpectedSourceTaskId,
+        string? ExpectedCreatedTaskId,
+        Tripo.Bridge.HostControlOperationStatusReceipt ObservedStatus);
+
+    private sealed record PendingRecoveryReview(
+        string ReceiptId,
+        string RecoveryToken,
+        IReadOnlyList<RecoveryInspectionCheck> SuccessfulChecks);
 
     private static bool IsSameDocumentSession(
         Tripo.Bridge.HostContextReceipt first,
@@ -1092,15 +2061,27 @@ public sealed class TripoPanelSession : IAsyncDisposable
         throw new InvalidOperationException(
             "Refresh the active host document before continuing.");
 
-    private static void EnsureSuccessfulTask(
+    private static string RequireSuccessfulTask(
         Tripo.Bridge.HostControlTaskStatusReceipt? status,
+        string? expectedTaskId,
         string stage)
     {
-        if (!string.Equals(status?.Status, "success", StringComparison.Ordinal))
+        if (expectedTaskId is null ||
+            !string.Equals(
+                status?.TaskId,
+                expectedTaskId,
+                StringComparison.Ordinal) ||
+            !string.Equals(
+                status?.Status,
+                "success",
+                StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                $"The {stage} task must report success before continuing.");
+                $"The {stage} task identity must match the durable journal and " +
+                "report success before continuing.");
         }
+
+        return expectedTaskId;
     }
 
     private static void ValidatePrompt(string prompt)
@@ -1147,6 +2128,23 @@ public sealed class TripoPanelSession : IAsyncDisposable
         }
 
         return normalized;
+    }
+
+    private static void ValidateImportReceipt(
+        PreparedObjImport prepared,
+        Tripo.Bridge.HostControlObjTaskImportReceipt receipt,
+        Tripo.Bridge.HostContextReceipt context)
+    {
+        string? issue = TripoPanelState.GetImportReceiptIssue(
+            prepared,
+            receipt,
+            context);
+        if (issue is not null)
+        {
+            throw new InvalidOperationException(
+                "The import receipt " + issue +
+                ". Preserve the UUID and inspect the host before retrying.");
+        }
     }
 
     private void UpdateState(Func<TripoPanelState, TripoPanelState> update)

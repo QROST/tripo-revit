@@ -259,7 +259,8 @@ public sealed class TripoPanelRecoveryStore : IDisposable
     public TripoPanelRecoveryLoadResult LoadStale() =>
         Load(includeActiveOwners: false);
 
-    public TripoPanelRecoveryLoadResult LoadCredentialMutationBlocks()
+    public TripoPanelRecoveryLoadResult LoadCredentialMutationBlocks(
+        bool excludeCurrentStoreHint = false)
     {
         List<LoadedTripoPanelRecoveryHint> hints = [];
         List<TripoPanelRecoveryIssue> issues = [];
@@ -295,7 +296,17 @@ public sealed class TripoPanelRecoveryStore : IDisposable
 
             hints.AddRange(
                 result.Hints
-                    .Where(HasUnresolvedPaidOperation)
+                    .Where(HasCredentialSensitiveOperation)
+                    .Where(loaded =>
+                        !excludeCurrentStoreHint ||
+                        !string.Equals(
+                            loaded.Hint.RecoveryId,
+                            _recoveryId,
+                            StringComparison.Ordinal) ||
+                        !string.Equals(
+                            loaded.Hint.Host,
+                            _host,
+                            StringComparison.Ordinal))
                     .Select(loaded => loaded with
                     {
                         FileName = host + "/" + loaded.FileName,
@@ -540,7 +551,9 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                 state.PreparedGeneration?.OperationId,
                 state.GenerationDispatchAttempted,
                 state.GenerationReceipt?.TaskId ??
-                state.GenerationOperationStatus?.CreatedTaskId,
+                (state.GenerationOperationStatus is { TaskIdDurable: true }
+                    ? state.GenerationOperationStatus.CreatedTaskId
+                    : null),
                 state.GenerationReceipt is not null,
                 state.GenerationOperationStatus);
         TripoPanelPaidRecoveryHint? conversion =
@@ -548,9 +561,24 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                 state.PreparedConversion?.OperationId,
                 state.ConversionDispatchAttempted,
                 state.ConversionReceipt?.ConversionTaskId ??
-                state.ConversionOperationStatus?.CreatedTaskId,
+                (state.ConversionOperationStatus is { TaskIdDurable: true }
+                    ? state.ConversionOperationStatus.CreatedTaskId
+                    : null),
                 state.ConversionReceipt is not null,
                 state.ConversionOperationStatus);
+        if (conversion is not null &&
+            (generation?.TaskIdDurable != true ||
+             generation.TaskId is null ||
+             !string.Equals(
+                 state.PreparedConversion?.SourceTaskId,
+                 generation.TaskId,
+                 StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "The conversion recovery identity does not match the durable " +
+                "generation source task.");
+        }
+
         TripoPanelImportRecoveryHint? import =
             state.ImportDispatchAttempted &&
             state.PreparedImport is not null
@@ -565,7 +593,7 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                     ValidateImportMode(state.PreparedImport.ImportMode),
                     state.PreparedImport.ApplyMaterials,
                     DispatchAttempted: true,
-                    ReceiptKnown: state.ImportReceipt is not null)
+                    ReceiptKnown: state.HasConfirmedImportReceipt)
                 : null;
         if (state.ImportDispatchAttempted &&
             state.PreparedImport is null)
@@ -743,6 +771,14 @@ public sealed class TripoPanelRecoveryStore : IDisposable
 
         ValidatePaidHint(hint.Generation);
         ValidatePaidHint(hint.Conversion);
+        if (hint.Conversion is not null &&
+            (hint.Generation?.TaskIdDurable != true ||
+             hint.Generation.TaskId is null))
+        {
+            throw new InvalidDataException(
+                "The conversion recovery hint has no durable generation " +
+                "source task.");
+        }
         if (hint.Import is not null)
         {
             _ = CanonicalizeUuid(
@@ -789,10 +825,11 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                 nameof(hint.JournalState));
         }
 
-        if (hint.TaskIdDurable && hint.TaskId is null)
+        if (hint.TaskIdDurable != (hint.TaskId is not null))
         {
             throw new InvalidDataException(
-                "The recovery hint marks a task durable without a task ID.");
+                "The recovery hint task-ID durability does not match whether " +
+                "a task ID was recorded.");
         }
     }
 
@@ -1173,10 +1210,11 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         return File.Exists(path) && IsReparsePoint(path);
     }
 
-    private static bool HasUnresolvedPaidOperation(
+    private static bool HasCredentialSensitiveOperation(
         LoadedTripoPanelRecoveryHint loaded) =>
-        loaded.Hint.Generation is { TaskIdDurable: false } ||
-        loaded.Hint.Conversion is { TaskIdDurable: false };
+        loaded.Hint.Generation is not null ||
+        loaded.Hint.Conversion is not null ||
+        loaded.Hint.Import is { ReceiptKnown: false };
 
     private static void EnsurePrivateNonReparseDirectory(string path)
     {

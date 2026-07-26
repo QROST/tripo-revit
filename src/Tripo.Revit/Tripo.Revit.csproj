@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Tripo.Revit</AssemblyName>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <OutputType>Library</OutputType>
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>Tripo.Revit</RootNamespace>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- Revit desktop references conflict with macOS reference-pack facades.
+         Windows CI keeps MSB3277 enabled; the non-Windows compile-only gate does not. -->
+    <NoWarn Condition="'$(OS)' != 'Windows_NT'">$(NoWarn);MSB3277</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference
+      Include="Autodesk.Revit.SDK"
+      ExcludeAssets="compile;runtime"
+      GeneratePathProperty="true"
+      PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Tripo.Bridge/Tripo.Bridge.csproj" />
+    <ProjectReference Include="../Tripo.HostUi/Tripo.HostUi.csproj" />
+    <ProjectReference
+      Include="../Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj"
+      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Tripo.Revit.addin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="CopyTripoRevitSidecar" AfterTargets="Build">
+    <ItemGroup>
+      <_TripoRevitSidecarFiles
+        Include="$(MSBuildProjectDirectory)/../Tripo.Revit.Mcp/bin/$(Configuration)/net8.0/**/*" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(_TripoRevitSidecarFiles)"
+      DestinationFiles="@(_TripoRevitSidecarFiles->'$(TargetDir)sidecar/%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+  </Target>
+</Project>

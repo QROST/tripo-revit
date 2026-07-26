@@ -1,0 +1,14 @@
+{
+  "solution": {
+    "path": "Tripo.Revit.sln",
+    "projects": [
+      "src/Tripo.Bridge/Tripo.Bridge.csproj",
+      "src/Tripo.HostUi/Tripo.HostUi.csproj",
+      "src/Tripo.Mcp/Tripo.Mcp.csproj",
+      "src/Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj",
+      "tests/Tripo.Bridge.Tests/Tripo.Bridge.Tests.csproj",
+      "tests/Tripo.HostUi.Tests/Tripo.HostUi.Tests.csproj",
+      "tests/Tripo.Mcp.Tests/Tripo.Mcp.Tests.csproj"
+    ]
+  }
+}

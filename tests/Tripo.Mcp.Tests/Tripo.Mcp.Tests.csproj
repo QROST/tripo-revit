@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Tripo.Mcp.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Tripo.Mcp.Tests</RootNamespace>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(SkipRevitHostBuild)' == 'true'">
+    <DefineConstants>$(DefineConstants);TRIPO_SKIP_REVIT_HOST_BUILD</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime;build;native;contentfiles;analyzers;buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Tripo.Mcp/Tripo.Mcp.csproj" />
+    <ProjectReference
+      Include="../../src/Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj"
+      ReferenceOutputAssembly="false" />
+    <ProjectReference
+      Include="../../src/Tripo.Revit/Tripo.Revit.csproj"
+      Condition="'$(SkipRevitHostBuild)' != 'true'"
+      ReferenceOutputAssembly="false"
+      SkipGetTargetFrameworkProperties="true" />
+  </ItemGroup>
+</Project>

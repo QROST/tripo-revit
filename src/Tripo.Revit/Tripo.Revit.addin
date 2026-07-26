@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Tripo MCP Bridge</Name>
+    <Assembly>TripoRevit\Tripo.Revit.dll</Assembly>
+    <AddInId>8D522C7A-8E6D-4C80-A760-7886B2B44151</AddInId>
+    <FullClassName>Tripo.Revit.TripoRevitApplication</FullClassName>
+    <VendorId>QROST</VendorId>
+    <VendorDescription>QROST community integration</VendorDescription>
+  </AddIn>
+</RevitAddIns>

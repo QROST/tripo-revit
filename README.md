@@ -30,9 +30,10 @@ the key to `.rvt`, `.rfa`, or Revit settings.
 > host-control/workflow/MCP/process tests and package-compilation gates exist.
 > The Windows CI lane is configured to compile the modeless WPF window, ribbon
 > command, sidecar
-> launcher, text workflow, credential dialog, and bundled sidecar layout.
-> Real Revit loading, WPF/owner behavior, Credential
-> Manager interaction,
+> launcher, text workflow, credential dialog, and bundled sidecar layout, and
+> to write/read/delete a synthetic credential under an isolated test target.
+> Real Revit loading, WPF/owner behavior, production-user Credential Manager
+> interaction,
 > transaction/Undo, scale/orientation, performance, and visual acceptance are
 > still open gates. There is no installer, signing, or automatic update
 > mechanism.
@@ -228,6 +229,12 @@ paid-operation identity and can make same-UUID recovery fail closed for
 unfinished window or MCP operations. Reconcile every unfinished paid UUID
 before rotating a key.
 
+Persistent window keys are Windows Generic Credentials under the target
+`TripoMCPs/TripoV3/<username>`. They are not written to `.rvt`, `.rfa`, Revit
+settings, or a temporary file. Do not create a temp key file: uncheck the
+checkbox for sidecar-process memory only, keep it checked for the native
+current-user store, or use an MCP client's secret/environment mechanism.
+
 The safest setup is to leave `TRIPO_LOCAL_DATA_DIR` unset in both processes.
 They then share `%LOCALAPPDATA%\TripoMCP`.
 
@@ -321,9 +328,10 @@ Recovery must happen in that owner process, or after its exit can be verified.
 This Revit build also refuses an API-key change when it observes any recorded
 UI paid hint, unconfirmed import, unverifiable foreign-owner record, or invalid
 recovery storage from Rhino or Revit. Symmetric protection against a
-Rhino-initiated key change requires the same conservative filter to be
-explicitly ported to the separately released Rhino panel; that parity is a
-cross-host release dependency, not evidence supplied by this repository. A
+Rhino-initiated key change is present only when the separately built/deployed
+Rhino panel carries the matching conservative filter. The paired source
+revision now does, but a legacy Rhino binary can still bypass that direction;
+compatible dual-host deployment remains a cross-host release dependency. A
 root-global UI intent lease serializes cross-panel credential-recovery scans,
 key-mutation requests, and paid dispatch calls. A separate private sidecar
 execution lease holds the actual key mutation and each paid UI or standalone

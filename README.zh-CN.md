@@ -27,10 +27,11 @@ sidecar 是唯一解析、存储或使用 Tripo API key 的进程。add-in 的 p
 > **当前状态：**add-in 以 Windows x64 上的 Revit 2026 为目标。仓库包含 portable
 > host-control/workflow/MCP/process tests 与 package-compilation gates；Windows
 > CI lane 已配置为编译 modeless WPF window、ribbon command、sidecar launcher、
-> text workflow、credential dialog 与 bundled sidecar layout。真实 Revit 加载、
-> WPF/owner 行为、
-> Credential Manager interaction、transaction/Undo、尺度/方向、性能和视觉验收仍是
-> 未完成的 gates。目前没有安装器、签名或自动更新机制。
+> text workflow、credential dialog 与 bundled sidecar layout，并会在隔离 test
+> target 下对 synthetic Credential 执行 write/read/delete。真实 Revit 加载、
+> WPF/owner 行为、production-user Credential Manager interaction、
+> transaction/Undo、尺度/方向、性能和视觉验收仍是未完成的 gates。目前没有安装器、
+> 签名或自动更新机制。
 
 ## 前置要求
 
@@ -207,6 +208,11 @@ key。MCP 路径最好使用 client credential store 或继承的进程环境。
 operation 的 same-UUID recovery fail closed；轮换 key 前必须先核对并解决每个未完成
 的付费 UUID。
 
+window 持久化 key 是 target 为 `TripoMCPs/TripoV3/<username>` 的 Windows Generic
+Credential；不会写入 `.rvt`、`.rfa`、Revit settings 或临时文件。不要自行创建
+temp key file：取消勾选可仅存 sidecar process memory，保持勾选使用当前用户 native
+store，MCP 则使用 client secret/environment 机制。
+
 最安全的设置是 Revit 与 MCP server 都不设置
 `TRIPO_LOCAL_DATA_DIR`。双方会共同使用 `%LOCALAPPDATA%\TripoMCP`。
 
@@ -274,9 +280,10 @@ dispatch 前，window 的 shared state layer 会在
 是否仍存活；recovery 必须在 owner process 中完成，或在确认它退出后再进行。
 这个 Revit build 在观察到 Rhino/Revit 的任意 UI paid hint、未确认 import、无法确认
 已退出的 foreign-owner record 或无效 recovery storage 时，也会拒绝 API-key change。
-要对“由 Rhino 发起的 key change”提供对称保护，必须把同一保守 filter 显式 port 到
-独立发布的 Rhino panel；这是 cross-host release dependency，不是本仓库已经提供的
-证据。一个 root-global UI intent lease 会串行化跨 panel 的 credential-recovery scan、
+“由 Rhino 发起的 key change”只有在独立 build/deploy 的 Rhino panel 同样带有该
+保守 filter 时才受对称保护。配套 source revision 现在已包含它，但 legacy Rhino
+binary 仍可绕过该方向；兼容的双宿主部署仍是 cross-host release dependency。一个
+root-global UI intent lease 会串行化跨 panel 的 credential-recovery scan、
 key-mutation request 与 paid dispatch call。另一个 private sidecar execution lease 会持有实际 key
 mutation，以及每个 UI 或 standalone MCP paid workflow 从 credential-derived
 fingerprint 直到 durable task、明确 `request_rejected` 或 ambiguous-outcome journal

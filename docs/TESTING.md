@@ -43,7 +43,9 @@ The automated suite covers:
 
 - authenticated, bounded bridge and host-control transports;
 - exact host PID and document-session binding;
-- credential precedence, native secret-store behavior, and redaction;
+- credential precedence and redaction, macOS/Windows native-store selection
+  without file fallback, and an opt-in isolated Windows native
+  write/read/delete canary;
 - paid-operation write-ahead journal, replay, conflict, lock, and
   `outcome_unknown` refusal to resend;
 - image transfer, signed download, ZIP extraction, bundle hashing, OBJ/MTL
@@ -54,7 +56,11 @@ The automated suite covers:
 - MCP schema plus real stdio initialization/tool-list handshakes;
 - Revit `.addin` AddInId, assembly path, application class, and vendor identity;
 - Windows-only CI additionally compiles the Revit/WPF host and exercises
-  packaged-sidecar smoke tests.
+  packaged-sidecar smoke tests. It also enables
+  `TRIPO_RUN_WINDOWS_CREDENTIAL_MANAGER_CANARY=1`, which uses a synthetic value
+  under a unique `TripoMCPs/Tests/.../<pid>/<guid>` target for `CredWriteW`,
+  `CredReadW`, and `CredDeleteW`. The canary never reads `TRIPO_API_KEY` or the
+  production `TripoMCPs/TripoV3/<username>` target.
 
 Portable presentation tests verify the strings and action state supplied to
 the WPF layer. They do not prove that Windows renders text as copyable, that a
@@ -68,6 +74,12 @@ requires `git diff --check` and a clean `git status`.
 
 A green portable gate is not Revit acceptance. Real Revit 2026 validation on
 Windows remains required:
+
+The isolated Windows CI credential canary proves only the native API in an
+ephemeral runner profile. Cleanup runs in `finally`, although a hard runner
+termination can still leave a clearly prefixed synthetic orphan. It is not
+evidence for Revit UI, a production user profile, or a compatible paired Rhino
+deployment.
 
 1. Load the `.addin` and open **Add-Ins → Tripo → Tripo 3D**.
 2. Exercise Windows Credential Manager without saving a key into `.rvt` or
@@ -107,10 +119,11 @@ The WPF window also needs a separate visual and accessibility pass:
 7. Make one recovered paid-status lookup fail. Verify the header says
    **Manual review required**, the failure details remain copyable, and the
    additional failure-review checkbox is required.
-8. Before claiming cross-host credential protection, pair this Revit build
-   with a Rhino build carrying the same conservative paid/import recovery
-   filter. Verify both mutation directions; Revit-only evidence does not prove
-   that a separately released legacy Rhino panel blocks its own key changes.
+8. Before claiming deployed cross-host credential protection, pair this Revit
+   build with a compatible Rhino build carrying the same conservative
+   paid/import recovery filter. Verify both mutation directions; the paired
+   source has parity, but Revit-only or legacy-Rhino evidence does not prove
+   the deployed pair.
 
 Static checks, portable tests, Windows compilation, real Revit interaction,
 visual acceptance, signing, installer validation, and public release are

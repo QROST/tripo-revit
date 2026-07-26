@@ -48,11 +48,18 @@ The automated suite covers:
   `outcome_unknown` refusal to resend;
 - image transfer, signed download, ZIP extraction, bundle hashing, OBJ/MTL
   parsing, coordinate conversion, and parser limits;
-- host UI state, recovery hints, explicit paid confirmations, and stable UUID
-  retries;
+- host UI state and presentation contracts, inline input validation, honest
+  task-progress mapping, diagnostic content, snapshot-bound recovery-review
+  receipts, and stable UUID retry eligibility;
 - MCP schema plus real stdio initialization/tool-list handshakes;
 - Revit `.addin` AddInId, assembly path, application class, and vendor identity;
-- Windows-only Revit host compilation and packaged-sidecar smoke tests.
+- Windows-only CI additionally compiles the Revit/WPF host and exercises
+  packaged-sidecar smoke tests.
+
+Portable presentation tests verify the strings and action state supplied to
+the WPF layer. They do not prove that Windows renders text as copyable, that a
+dialog defaults to the intended button, or that UI Automation exposes the
+expected label and help relationships.
 
 Generated `bin/` and `obj/` files are ignored. A clean test receipt also
 requires `git diff --check` and a clean `git status`.
@@ -74,6 +81,36 @@ Windows remains required:
 6. Verify transaction rollback, Undo, design-coordinate limits, family-template
    resolution, saved `.rfa`, idempotent replay, materials, and appearance assets.
 7. Verify package layout and upgrade/rollback behavior from a clean checkout.
+
+The WPF window also needs a separate visual and accessibility pass:
+
+1. At 100%, 150%, and 200% Windows scaling, resize the tool window down to its
+   minimum size. Verify that stage content reflows, action buttons wrap, and no
+   prompt, status, checkbox, or recovery text is clipped.
+2. Test keyboard-only traversal, default/cancel behavior in both dialogs, focus
+   return after dialogs close, and copying every document, operation, task, and
+   receipt ID.
+3. With Windows High Contrast and Narrator enabled, verify the three numbered
+   stages, field labels, live operation status, inline validation, progress
+   values, expanders, and disabled-action explanations.
+4. Confirm that no progress bar appears before a real task progress value is
+   returned; out-of-range provider values must remain visible only as raw
+   diagnostic evidence.
+5. Exercise the friendly **Revit family (recommended)** and
+   **DirectShape mesh** choices, with and without baked materials, and compare
+   the visible import receipt to the actual created Revit element.
+6. Change the recovery files after inspection but before acknowledgement. The
+   final attempt must reload and refuse the changed snapshot; the refreshed
+   snapshot must be inspected again before it can be archived. Also change a
+   paid-journal status after inspection and verify that the one-time review
+   receipt is rejected.
+7. Make one recovered paid-status lookup fail. Verify the header says
+   **Manual review required**, the failure details remain copyable, and the
+   additional failure-review checkbox is required.
+8. Before claiming cross-host credential protection, pair this Revit build
+   with a Rhino build carrying the same conservative paid/import recovery
+   filter. Verify both mutation directions; Revit-only evidence does not prove
+   that a separately released legacy Rhino panel blocks its own key changes.
 
 Static checks, portable tests, Windows compilation, real Revit interaction,
 visual acceptance, signing, installer validation, and public release are

@@ -258,16 +258,29 @@ the paid-operation journal during recovery.
    **Connect / Refresh** can refresh it explicitly. A different document
    session is rejected while this window still owns workflow state.
 3. If no key is usable, paste one into **API key…** and choose persistent or
-   session-only storage. Create keys at
+   session-only storage. A saved key can be explicitly removed from the same
+   header; environment-provided keys are reported separately. Create keys at
    [Tripo Platform](https://platform.tripo3d.ai/api-keys).
 4. Enter the prompt, face limit, and material preference. Click **Generate**.
    The window displays a selectable durable operation UUID before showing a
-   credit confirmation. Declining sends no paid request.
+   credit confirmation with the bounded request summary. Declining sends no
+   paid request.
 5. Click **Refresh generation** until the task reports `success`.
 6. Click **Convert to OBJ**. It uses a different UUID and a separate credit
    confirmation. Refresh conversion until `success`.
-7. Choose object name, `native`/`mesh`/`family`, and whether to apply baked
-   diffuse materials; then click **Import into Revit**.
+7. Choose **Revit family (recommended)** or **DirectShape mesh**, name the
+   object, and choose whether the import should apply baked materials from the
+   OBJ bundle. Then click **Import into Revit**. The final receipt reports the
+   actual created-element, material, and texture counts; a request for
+   materials never becomes a claim that they were present.
+
+The three numbered stages show only their current actionable status. Expand
+**Workflow details and durable IDs** to copy document/session IDs, operation
+UUIDs, task IDs, raw failure/credit/timestamp evidence, and the final Revit
+import receipt. Task state is explicitly last-known until a manual refresh.
+Progress is shown only for a queued/running task when the provider returned a
+valid value from 0 through 100; absent or inconsistent terminal progress
+remains diagnostic evidence rather than becoming a misleading progress bar.
 
 The modeless window never accesses `Document` or `UIApplication` directly;
 context and mutation still travel sidecar → host bridge → bounded
@@ -275,16 +288,25 @@ context and mutation still travel sidecar → host bridge → bounded
 lost response, the stage first requires **Refresh**. A retry becomes available
 only when the paid-operation journal says creation can resume, and the button
 is explicitly labelled **Retry … (same UUID)**. Once a durable task or import
-receipt is known, the stage action is disabled instead of looking like a new
-request. **New workflow** is disabled while any dispatch is unresolved, and
-API-key mutation is disabled while a paid dispatch is unresolved.
+receipt is confirmed, the stage action is disabled instead of looking like a
+new request. An inconsistent import receipt remains visible and copyable,
+keeps the same-UUID retry available, and cannot be cleared as if it were a
+success. **New workflow** remains disabled until the current workflow is
+explicitly reset. Environment-provided keys cannot be replaced from the
+panel. After any dispatch, the workflow remains account-bound until reset:
+replacement keys are session-only, must belong to the same Tripo account, and
+an unresolved paid UUID without a durable task requires the exact original
+key. Resetting a resolved workflow requires a default-No confirmation and
+does not cancel remote tasks, remove journal evidence, or delete imported
+Revit objects.
 
 Before dispatch, the window's shared state layer atomically writes a private
 recovery hint under
 `%LOCALAPPDATA%\TripoMCP\ui-recovery\revit\<recovery-id>.json`
-(or the equivalent `TRIPO_LOCAL_DATA_DIR` root). The hint contains UUIDs,
-durable task IDs when known, and the minimum import retry parameters. It does
-not contain the prompt, API key, Authorization header, URL, or arbitrary path.
+(or the equivalent `TRIPO_LOCAL_DATA_DIR` root). The hint contains UUIDs, the
+durable generation task used as the conversion source, durable result task IDs
+when known, and the minimum import retry parameters. It does not contain the
+prompt, API key, Authorization header, URL, or arbitrary path.
 
 The independently identified hint remains through a successful import until
 the live workflow is explicitly reset. After a Revit exit or crash, the next
@@ -292,8 +314,12 @@ window shows stale recovery IDs and blocks new workflows. A hint owned by
 another Revit process is conservatively
 blocking because panel-session liveness is not guessed across processes.
 Recovery must happen in that owner process, or after its exit can be verified.
-API-key changes also refuse any unresolved recorded UI paid hint, unverifiable
-foreign-owner record, or invalid recovery storage from Rhino or Revit. A
+This Revit build also refuses an API-key change when it observes any recorded
+UI paid hint, unconfirmed import, unverifiable foreign-owner record, or invalid
+recovery storage from Rhino or Revit. Symmetric protection against a
+Rhino-initiated key change requires the same conservative filter to be
+explicitly ported to the separately released Rhino panel; that parity is a
+cross-host release dependency, not evidence supplied by this repository. A
 root-global UI intent lease serializes cross-panel credential-recovery scans,
 key-mutation requests, and paid dispatch calls. A separate private sidecar
 execution lease holds the actual key mutation and each paid UI or standalone
@@ -301,13 +327,16 @@ MCP workflow from
 credential-derived fingerprinting through its durable or ambiguous journal
 checkpoint, even if the UI pipe disconnects. Only one key mutation or paid
 create/convert is admitted at a time; retry a contending request with the same
-UUID after the active operation checkpoints. **Check recovered paid
-operations** only queries local `operation_status`; it does not resend a paid
-call or import.
+UUID after the active operation checkpoints. **Inspect recovered IDs** only
+queries local `operation_status`; it does not resend a paid call or import.
 Reconcile import manually with the displayed same UUID. After checking every
-ID, **Acknowledge reconciled IDs…** requires the exact text `RECONCILED`, then
-archives valid hints. If the displayed set changed, that acknowledgement is
-refused and the refreshed set must be reviewed first. Invalid, oversized,
+ID, **Acknowledge reviewed IDs…** requires the applicable paid/import review
+checkboxes. The inspection issues a one-time receipt bound to that exact
+recovery snapshot. Before archiving, the panel reloads the recovery set and
+rechecks every successful paid-journal status; if either changed, the final
+attempt is refused and the refreshed snapshot must be inspected again.
+Inspection failures are labelled **Manual review required** and require an
+additional explicit failure-review checkbox. Invalid, oversized,
 unknown-schema, or symlinked hints remain blocked for manual inspection; a
 custom Windows data root must retain
 current-user-only ACLs. The paid-operation journal—not the hint—is

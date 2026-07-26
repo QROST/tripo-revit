@@ -240,45 +240,56 @@ upload-ambiguity checkpoint 持久化。恢复期间应与 paid-operation journa
 5. 点击 **Refresh generation**，直到 task 为 `success`。
 6. 点击 **Convert to OBJ**。该阶段使用另一个 UUID 与第二次独立费用确认；
    刷新 conversion 直到成功。
-7. 选择 object name、`native`/`mesh`/`family` 与是否应用 baked diffuse
-   materials，然后点击 **Import into Revit**。
+7. 选择 **Revit family（推荐）** 或 **DirectShape mesh**，填写 object name，
+   并选择是否尝试应用 OBJ bundle 中的 baked materials，然后点击
+   **Import into Revit**。最终 receipt 会报告实际创建的 element、material 与
+   texture 数量；请求应用材质不等于声称 bundle 中确实存在材质。
 
 modeless window 不直接访问 `Document` 或 `UIApplication`；context 与 mutation 仍
 沿 sidecar → host bridge → bounded `ExternalEvent` 执行。它不自动轮询，也不声称能
 取消远端 task。响应丢失后，该阶段必须先执行 **Refresh**；只有 paid-operation
 journal 表明 creation 可以继续时，重试才会启用，button 会明确标为
-**Retry … (same UUID)**。一旦取得 durable task 或 import receipt，对应阶段 action
-就会禁用，不会伪装成新请求。任意 dispatch 未决时，**New workflow** 会禁用；
-付费 dispatch 未决时，API-key mutation 也会禁用。
+**Retry … (same UUID)**。task 状态在手动刷新前会明确标为 last-known；只有
+queued/running task 返回 0–100 范围内的真实 progress 时才显示 progress bar。已确认
+的 import receipt 会禁用对应 action；异常 receipt 会继续可见、可复制，并保留同
+UUID retry，不会被当作成功清除。当前 workflow 显式 reset 前，**New workflow**
+会持续禁用。环境变量提供的 key 不能从 panel 覆盖；任意 dispatch 发生后，workflow
+会一直绑定原 Tripo account 直到 reset：替换 key 只能 session-only，必须属于同一
+account；没有 durable task 的 paid UUID 还必须恢复精确原 key。
 
 dispatch 前，window 的 shared state layer 会在
 `%LOCALAPPDATA%\TripoMCP\ui-recovery\revit\<recovery-id>.json`
 （或 `TRIPO_LOCAL_DATA_DIR` 的对应 root）原子写入 private recovery hint。hint 只
-包含 UUID、已知的 durable task ID 与 import retry 所需的最少参数；不包含 prompt、
-API key、Authorization header、URL 或任意 path。
+包含 UUID、作为 conversion source 的 durable generation task、已知的结果 task ID
+与 import retry 所需的最少参数；不包含 prompt、API key、Authorization header、URL
+或任意 path。
 
 这个具有独立 identity 的 hint 会在 import 成功后继续保留，直到 live workflow 被
 显式 reset。Revit 退出或崩溃后，下次打开 window 会显示 stale recovery ID，并阻止
 新 workflow。
 另一个 Revit process 拥有的 hint 会保守地阻塞，因为不能跨 process 猜测 panel session
 是否仍存活；recovery 必须在 owner process 中完成，或在确认它退出后再进行。
-API-key change 还会拒绝 Rhino 或 Revit 中任何未决且已记录的 UI paid hint、无法
-确认已退出的 foreign-owner record 或无效 recovery storage。一个 root-global UI
-intent lease 会串行化跨 panel 的 credential-recovery scan、key-mutation request
-与 paid dispatch call。另一个 private sidecar execution lease 会持有实际 key
+这个 Revit build 在观察到 Rhino/Revit 的任意 UI paid hint、未确认 import、无法确认
+已退出的 foreign-owner record 或无效 recovery storage 时，也会拒绝 API-key change。
+要对“由 Rhino 发起的 key change”提供对称保护，必须把同一保守 filter 显式 port 到
+独立发布的 Rhino panel；这是 cross-host release dependency，不是本仓库已经提供的
+证据。一个 root-global UI intent lease 会串行化跨 panel 的 credential-recovery scan、
+key-mutation request 与 paid dispatch call。另一个 private sidecar execution lease 会持有实际 key
 mutation，以及每个 UI 或 standalone MCP
 paid workflow 从 credential-derived fingerprint 直到 durable 或 ambiguous journal
 checkpoint 的全过程；即使 UI pipe 断开也不会提前释放。同一时间只允许一个 key
 mutation 或 paid create/convert；发生竞争时，必须等当前 operation checkpoint 后，
-以同一 UUID 重试。**Check recovered paid
-operations** 只查询本地
+以同一 UUID 重试。**Inspect recovered IDs** 只查询本地
 `operation_status`，不会重发付费 call 或 import。import 必须使用显示的同一 UUID
-人工 reconciliation。核对全部 ID 后，**Acknowledge reconciled IDs…** 要求精确
-输入 `RECONCILED`，随后才会归档有效 hint。如果已显示的集合发生变化，本次
-acknowledgement 会被拒绝，必须先核对刷新后的集合。无效、超限、未知 schema 或 symlink
-hint 会继续阻塞，等待人工检查；自定义 Windows data root 必须保持 current-user-only
-ACL。paid-operation journal 才是 authority，hint 不是。Revit window 仍然只支持
-text-to-3D；本地图生功能目前由可选 MCP tools 提供。
+人工 reconciliation。核对全部 ID 后，**Acknowledge reviewed IDs…** 要求勾选适用的
+paid/import review 项。inspection 会签发与当前 recovery snapshot 绑定的一次性
+receipt；归档前还会重新载入 recovery set，并重新核对所有先前成功的 paid-journal
+status。只要任一项发生变化，最终操作就会被拒绝，刷新后的 snapshot 必须重新
+inspection。inspection 失败会明确显示 **Manual review required**，并要求额外勾选
+failure review。无效、超限、未知 schema 或 symlink hint 会继续阻塞，等待人工检查；
+自定义 Windows data root 必须保持 current-user-only ACL。paid-operation journal
+才是 authority，hint 不是。Revit window 仍然只支持 text-to-3D；本地图生功能目前由
+可选 MCP tools 提供。
 
 ## 启动并验证 MCP
 

@@ -5,8 +5,10 @@
 Tripo-Revit 是面向 Autodesk Revit 2026 的独立社区适配器。AEC 用户可以在
 modeless WPF window 内运行完整 text-to-model workflow；agentic client 可以通过
 MCP 使用同一套 workflow。通过校验的 OBJ 输出（仅几何，或附带 baked-diffuse
-材质与贴图）会导入精确的 active Revit project，目标可以是 Generic Models
-`DirectShape`，也可以是生成、加载并放置的 Family instance。
+材质与贴图）会导入执行 import 时处于 active 状态的可写 Revit project，目标可以是
+Generic Models `DirectShape`，也可以是生成、加载并放置的 Family instance。
+Generation 与 conversion 不绑定 Revit project，因此同一个 conversion 可使用
+不同的 import UUID 导入多个 project。
 
 它不是 Tripo 或 Autodesk 官方产品。
 
@@ -79,7 +81,7 @@ Revit 2026。
 构建 host project 时，也会构建 matching sidecar，并把完整输出复制到
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`。只有可选 MCP 路径才需要单独的
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` 输出。Bridge protocol v2 与 host-control
-protocol v3 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
+protocol v4 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
 
 ## 安装 Revit add-in
 
@@ -236,8 +238,9 @@ upload-ambiguity checkpoint 持久化。恢复期间应与 paid-operation journa
    **Add-Ins → Tripo → Tripo 3D**。重复点击会激活同一个 modeless window。
    window 仍持有 workflow state 时，点击关闭按钮只会隐藏它，不会丢弃 session；
    再次使用 ribbon command 即可显示。
-2. window 会自动连接精确 active project；也可以点击 **Connect / Refresh**
-   显式刷新。当该 window 仍持有 workflow state 时，不同 document session 会被拒绝。
+2. window 会自动连接 active project；也可以点击 **Connect / Refresh** 显式刷新。
+   Generation 与 conversion state 会跨 project switch 保留；只有 import UUID
+   绑定当前 target，且 import dispatch 结果未决时才禁止切换 target。
 3. 若没有可用 key，在 **API key…** 粘贴 key，并选择 persistent 或 session-only
    storage。可在 [Tripo Platform](https://platform.tripo3d.ai/api-keys) 创建 key。
 4. 输入 prompt、face limit 与材质选项，然后点击 **Generate**。window 会先显示
@@ -248,8 +251,9 @@ upload-ambiguity checkpoint 持久化。恢复期间应与 paid-operation journa
    刷新 conversion 直到成功。
 7. 选择 **Revit family（推荐）** 或 **DirectShape mesh**，填写 object name，
    并选择是否尝试应用 OBJ bundle 中的 baked materials，然后点击
-   **Import into Revit**。最终 receipt 会报告实际创建的 element、material 与
-   texture 数量；请求应用材质不等于声称 bundle 中确实存在材质。
+   显示 active target project 名称的 import button。最终 receipt 会报告实际创建的
+   element、material 与 texture 数量；请求应用材质不等于声称 bundle 中确实存在材质。
+   激活另一个可写 project 并 reconnect 后，可用新的 import UUID 再次导入同一 conversion。
 
 modeless window 不直接访问 `Document` 或 `UIApplication`；context 与 mutation 仍
 沿 sidecar → host bridge → bounded `ExternalEvent` 执行。它不自动轮询，也不声称能
@@ -257,8 +261,9 @@ modeless window 不直接访问 `Document` 或 `UIApplication`；context 与 mut
 journal 表明 creation 可以继续时，重试才会启用，button 会明确标为
 **Retry … (same UUID)**。task 状态在手动刷新前会明确标为 last-known；只有
 queued/running task 返回 0–100 范围内的真实 progress 时才显示 progress bar。已确认
-的 import receipt 会禁用对应 action；异常 receipt 会继续可见、可复制，并保留同
-UUID retry，不会被当作成功清除。当前 workflow 显式 reset 前，**New workflow**
+的 import receipt 会保留在 history，并允许为当前 active project 创建新的 import
+UUID；异常 receipt 会继续可见、可复制，并保留同 UUID retry，不会被当作成功清除。
+当前 workflow 显式 reset 前，**New workflow**
 会持续禁用。环境变量提供的 key 不能从 panel 覆盖；已被接受或结果不明确的
 dispatch 会一直绑定原 Tripo account 直到 reset：替换 key 只能 session-only，必须
 属于同一 account；没有 durable task 的未决 paid UUID 还必须恢复精确原 key。
@@ -320,8 +325,9 @@ failure review。无效、超限、未知 schema 或 symlink hint 会继续阻�
 - 精确的临时 `documentSessionId`；
 - 支持的 host capabilities。
 
-后续 tools 必须原样保留该 `documentSessionId`。若 active document 改变，应重新
-调用 `tripo_host_context`，不能静默继续操作另一个 project。
+`documentSessionId` 只用于 import 到该精确 active project。Generation、image
+upload/generation、conversion、task status 与 operation status 都不绑定 project。
+每次 import target 改变后，应立即重新调用 `tripo_host_context`。
 
 项目没有 HTTP health endpoint。若同时运行多个 Revit process，discovery 会返回
 `host_ambiguous`，不会猜测目标。把 `TRIPO_HOST_PID` 设为目标 Revit PID，然后重启
@@ -336,10 +342,10 @@ MCP 入口通过以下八个 tools 暴露同一套 shared workflow：
 | `tripo_host_context` | 无 | 读取已连接 Revit 进程与精确 active-document session；不调用 Tripo API。 |
 | `tripo_task_status` | `taskId` | 查询一个已有 Tripo task。 |
 | `tripo_operation_status` | `operationId` | 读取一条持久化的本地 paid-operation record；不调用 Tripo 或 Revit。 |
-| `tripo_create_text_task` | `prompt`、`faceLimit`、`withMaterials`、`documentSessionId`、`operationId`、`confirmExternalCost` | 创建一个 text-to-model task。`withMaterials=true` 请求 textured PBR generation（`texture`/`pbr`）；`false` 保持 geometry-only。可能消耗 credits。 |
+| `tripo_create_text_task` | `prompt`、`faceLimit`、`withMaterials`、`operationId`、`confirmExternalCost` | 创建一个不绑定 project 的 text-to-model task。`withMaterials=true` 请求 textured PBR generation（`texture`/`pbr`）；`false` 保持 geometry-only。可能消耗 credits。 |
 | `tripo_stage_local_image` | `localImagePath` | 校验并私有 snapshot 一张本地 PNG/JPEG，返回 opaque descriptor；不调用 Tripo。 |
-| `tripo_create_image_task` | `transferId`、`sha256`、`byteLength`、`mediaType`、`faceLimit`、`withMaterials`、`documentSessionId`、`operationId`、`confirmExternalCost` | 上传一张 staged image，并以独立 upload/generation durable checkpoints 创建 image-to-model task。四个 descriptor fields 必须原样复制自 `tripo_stage_local_image`。可能消耗 credits。 |
-| `tripo_create_obj_conversion` | `sourceTaskId`、`faceLimit`、`withMaterials`、`documentSessionId`、`operationId`、`confirmExternalCost` | 创建一个 OBJ conversion。`withMaterials=true` 请求带 baked-diffuse MTL 与 image textures 的 OBJ bundle（`bake=true`）；`false` 只转换几何。可能消耗 credits。 |
+| `tripo_create_image_task` | `transferId`、`sha256`、`byteLength`、`mediaType`、`faceLimit`、`withMaterials`、`operationId`、`confirmExternalCost` | 上传一张 staged image，并以独立 upload/generation durable checkpoints 创建不绑定 project 的 image-to-model task。四个 descriptor fields 必须原样复制自 `tripo_stage_local_image`。可能消耗 credits。 |
+| `tripo_create_obj_conversion` | `sourceTaskId`、`faceLimit`、`withMaterials`、`operationId`、`confirmExternalCost` | 创建一个不绑定 project 的 OBJ conversion。`withMaterials=true` 请求带 baked-diffuse MTL 与 image textures 的 OBJ bundle（`bake=true`）；`false` 只转换几何。可能消耗 credits。 |
 | `tripo_import_obj_task` | `conversionTaskId`、`name`、`documentSessionId`、`operationId`、`importMode`（默认 `native`）、`applyMaterials`（默认 `false`） | 下载、校验并将成功的 OBJ conversion 导入为 `DirectShape` 或 Family instance。 |
 
 输入边界：
@@ -349,7 +355,8 @@ MCP 入口通过以下八个 tools 暴露同一套 shared workflow：
 - 导入 `name`：1–128 个字符；
 - task ID 必须原样使用 Tripo 返回值：接受当前 `task_...` 标识与 canonical
   lowercase UUID 响应；
-- `documentSessionId` 必须是 `tripo_host_context` 返回的精确 UUID；
+- import 的 `documentSessionId` 必须是紧邻该 import 的
+  `tripo_host_context` 返回的精确 UUID；
 - 每个 `operationId` 都是 caller-generated UUID；
 - `importMode` 可以是 `native`、`mesh` 或 `family`；本 build 会以
   `import_mode_unsupported` 拒绝 `instance`，而 `native` 解析为 `family`；
@@ -359,20 +366,21 @@ MCP 入口通过以下八个 tools 暴露同一套 shared workflow：
 
 ## 典型工作流
 
-1. 调用 `tripo_host_context` 并保留其精确 `documentSessionId`。
-2. 选择一种 generation 分支：
+1. 选择一种 generation 分支：
    - text：生成 UUID A；在用户明确确认费用后调用 `tripo_create_text_task`；
    - 本地图像：先调用 `tripo_stage_local_image`，再生成 UUID A；明确确认费用后，
      把 descriptor 返回的 `transferId`、`sha256`、`byteLength` 与 `mediaType`
      分别传入四个同名参数，再调用 `tripo_create_image_task`。
-3. 用 `tripo_task_status` 轮询返回的 task ID，直到 `success` 或 terminal failure。
+2. 用 `tripo_task_status` 轮询返回的 task ID，直到 `success` 或 terminal failure。
    遇到 `failed`、`cancelled`、`banned` 或 `expired` 时停止。
-4. 生成 UUID B；再次取得明确费用确认后调用
+3. 生成 UUID B；再次取得明确费用确认后调用
    `tripo_create_obj_conversion`。
-5. 轮询 conversion task，直到 `success` 或 terminal failure。
-6. 生成 UUID C，调用 `tripo_import_obj_task`，并按需选择
-   `importMode` 与 `applyMaterials`。
-7. 检查 host receipt 与创建出的 `DirectShape` 或 Family instance。
+4. 轮询 conversion task，直到 `success` 或 terminal failure。
+5. 激活可写 target project，调用 `tripo_host_context`，生成 UUID C，并用该
+   `documentSessionId` 调用 `tripo_import_obj_task`，按需选择 `importMode` 与
+   `applyMaterials`。
+6. 检查 host receipt 与创建出的 `DirectShape` 或 Family instance。要导入另一个
+   project，使用新 context 与新 import UUID 重复步骤 5。
 
 若要导入材质，两个付费创建阶段都使用 `withMaterials=true`，导入阶段使用
 `applyMaterials=true`；geometry-only 工作流则把三个 flags 都保持为 `false`。
@@ -382,8 +390,8 @@ MCP 入口通过以下八个 tools 暴露同一套 shared workflow：
 `"already_exists"`。
 
 付费阶段响应丢失时，先使用 `tripo_operation_status` 检查对应的本地记录。只有
-journal 表明 creation 可以继续时，才以原 UUID、完全相同的显式参数、API key 与
-document session 重试；text-task 重试还必须保持相同的 effective model。
+journal 表明 creation 可以继续时，才以原 UUID、完全相同的显式参数与 API key
+重试；text-task 重试还必须保持相同的 effective model。
 
 若 operation 为 `outcome_unknown`，不要自动重发或创建替代 UUID。保留 journal，并
 人工核对 Tripo task 或 billing history。
@@ -395,11 +403,12 @@ Image creation 会分别 checkpoint upload 与 generation。持久化的 `file_t
 继续 generation 而不再次 upload。若 upload 或 generation 结果不明确，会记录具体
 stage 并拒绝自动重发；人工核对前需保留 `image-transfers/` 与 journal。
 
-导入恢复有意采用不同规则。复用 import UUID、conversion task 与 artifact
-content、name、解析后的 mode 和 materials flag。Revit 重启后，应重新打开同一个目标
-project，调用
+导入恢复有意采用不同规则。未决 retry 必须针对同一个 target，复用 import UUID、
+conversion task 与 artifact content、name、解析后的 mode 和 materials flag。
+Revit 重启后，应重新打开该目标 project，调用
 `tripo_host_context`，并传入新的 `documentSessionId`；host fingerprint 排除了该
-临时 session ID，但 active-session check 仍会 fail closed。要让
+临时 session ID，但 active-session check 仍会 fail closed。主动导入另一个 project
+时使用新的 import UUID。要让
 `already_exists` 跨应用重启生效，原 import 后必须保存 Revit project；若未保存的改动
 已经丢失，持久化项目中没有可回放 element，重试会再次 commit 该 import。
 
@@ -475,12 +484,10 @@ server。
 
 ### `document_changed`
 
-active project 已不再匹配保留的 session。重新调用 `tripo_host_context`。
-paid-operation identity 不会迁移到新 session。已发送或响应丢失的付费阶段应先调用
-`tripo_operation_status`。除非 journal 报告明确 `request_rejected`，否则保留原 UUID
-与 identity；若被明确拒绝，应修正 credential 并准备新 UUID。只有
-重新打开同一个目标 project，并保持原 import UUID、conversion task 与 content、
-name、解析后的 mode 和 materials flag 时，import retry 才能使用新 session。
+active project 已不再匹配 import target session。Generation 与 conversion 不受影响。
+为新的 active project 准备新 import UUID 前，应重新调用 `tripo_host_context`。如果
+import dispatch 结果未决，应返回原 target，并保持原 import UUID、conversion task
+与 content、name、解析后的 mode 和 materials flag 进行 reconciliation。
 
 ### `host_busy`
 

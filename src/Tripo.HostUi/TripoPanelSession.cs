@@ -4,14 +4,12 @@ public sealed record PreparedTextGeneration(
     string Prompt,
     int FaceLimit,
     bool WithMaterials,
-    string DocumentSessionId,
     string OperationId);
 
 public sealed record PreparedObjConversion(
     string SourceTaskId,
     int FaceLimit,
     bool WithMaterials,
-    string DocumentSessionId,
     string OperationId);
 
 public sealed record PreparedObjImport(
@@ -20,7 +18,13 @@ public sealed record PreparedObjImport(
     string DocumentSessionId,
     string OperationId,
     string ImportMode,
-    bool ApplyMaterials);
+    bool ApplyMaterials,
+    string TargetDocumentTitle = "",
+    string TargetHost = "");
+
+public sealed record CompletedObjImport(
+    PreparedObjImport Prepared,
+    Tripo.Bridge.HostControlObjTaskImportReceipt Receipt);
 
 public sealed record TripoPanelState(
     bool Connected,
@@ -40,6 +44,7 @@ public sealed record TripoPanelState(
     PreparedObjImport? PreparedImport,
     bool ImportDispatchAttempted,
     Tripo.Bridge.HostControlObjTaskImportReceipt? ImportReceipt,
+    IReadOnlyList<CompletedObjImport> CompletedImports,
     string? LastError)
 {
     public static TripoPanelState Initial { get; } = new(
@@ -60,6 +65,7 @@ public sealed record TripoPanelState(
         PreparedImport: null,
         ImportDispatchAttempted: false,
         ImportReceipt: null,
+        CompletedImports: [],
         LastError: null);
 
     public bool HasWorkflowState =>
@@ -87,7 +93,10 @@ public sealed record TripoPanelState(
 
     public bool HasUnresolvedDispatch =>
         HasUnresolvedPaidDispatch ||
-        (ImportDispatchAttempted && !HasConfirmedImportReceipt);
+        HasUnresolvedImportDispatch;
+
+    public bool HasUnresolvedImportDispatch =>
+        ImportDispatchAttempted && !HasConfirmedImportReceipt;
 
     public bool HasCredentialBoundWorkflow =>
         GenerationDispatchAttempted ||
@@ -109,23 +118,20 @@ public sealed record TripoPanelState(
         get
         {
             if (PreparedImport is null ||
-                ImportReceipt is null ||
-                Context is null)
+                ImportReceipt is null)
             {
                 return false;
             }
 
             return GetImportReceiptIssue(
                        PreparedImport,
-                       ImportReceipt,
-                       Context) is null;
+                       ImportReceipt) is null;
         }
     }
 
     internal static string? GetImportReceiptIssue(
         PreparedObjImport prepared,
-        Tripo.Bridge.HostControlObjTaskImportReceipt receipt,
-        Tripo.Bridge.HostContextReceipt context)
+        Tripo.Bridge.HostControlObjTaskImportReceipt receipt)
     {
         Tripo.Bridge.HostImportReceipt hostReceipt = receipt.HostReceipt;
         if (hostReceipt.TransactionStatus is not
@@ -134,8 +140,11 @@ public sealed record TripoPanelState(
             return "did not confirm a committed or existing host object";
         }
 
+        string targetHost = string.IsNullOrWhiteSpace(prepared.TargetHost)
+            ? hostReceipt.Host
+            : prepared.TargetHost;
         string expectedMode = prepared.ImportMode == "native"
-            ? context.Host switch
+            ? targetHost switch
             {
                 "rhino" => "instance",
                 "revit" => "family",
@@ -152,7 +161,7 @@ public sealed record TripoPanelState(
                 StringComparison.Ordinal) ||
             !string.Equals(
                 hostReceipt.Host,
-                context.Host,
+                targetHost,
                 StringComparison.Ordinal) ||
             !string.Equals(
                 hostReceipt.DocumentSessionId,
@@ -198,7 +207,7 @@ public sealed record TripoPanelState(
              hostReceipt.SavedFamilyPath.Length > 4096 ||
              !LooksLikeAbsoluteHostPath(hostReceipt.SavedFamilyPath) ||
              (string.Equals(
-                  context.Host,
+                  targetHost,
                   "revit",
                   StringComparison.Ordinal) &&
               (!LooksLikeAbsoluteWindowsPath(hostReceipt.SavedFamilyPath) ||
@@ -455,14 +464,15 @@ public sealed class TripoPanelSession : IAsyncDisposable
                     await client.GetHostContextAsync(token).ConfigureAwait(false);
                 EnsureHealthMatchesContext(health, context);
                 TripoPanelState current = State;
-                if (current.Context is not null &&
-                    !IsSameDocumentSession(current.Context, context) &&
-                    current.HasWorkflowState)
+                bool documentChanged =
+                    current.Context is not null &&
+                    !IsSameDocumentSession(current.Context, context);
+                if (documentChanged && current.HasUnresolvedImportDispatch)
                 {
                     throw new InvalidOperationException(
-                        "The active host document changed while this panel still " +
-                        "owns workflow state. Return to the original document, or " +
-                        "resolve the existing operation before starting a new workflow.");
+                        "The active host document changed while an import outcome is " +
+                        "unresolved. Return to the import target and retry the same " +
+                        "import UUID before selecting another project.");
                 }
 
                 Tripo.Bridge.HostControlCredentialStatusReceipt credentials =
@@ -474,6 +484,15 @@ public sealed class TripoPanelSession : IAsyncDisposable
                     Connected = true,
                     Context = context,
                     CredentialStatus = credentials,
+                    PreparedImport = documentChanged
+                        ? null
+                        : state.PreparedImport,
+                    ImportDispatchAttempted = documentChanged
+                        ? false
+                        : state.ImportDispatchAttempted,
+                    ImportReceipt = documentChanged
+                        ? null
+                        : state.ImportReceipt,
                     LastError = null,
                 });
             },
@@ -550,12 +569,10 @@ public sealed class TripoPanelSession : IAsyncDisposable
                     "before creating another operation ID.");
             }
 
-            Tripo.Bridge.HostContextReceipt context = RequireContext();
             PreparedTextGeneration prepared = new(
                 prompt,
                 faceLimit,
                 withMaterials,
-                context.DocumentSessionId,
                 Guid.NewGuid().ToString("D"));
             UpdateState(state => state with
             {
@@ -572,6 +589,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 PreparedImport = null,
                 ImportDispatchAttempted = false,
                 ImportReceipt = null,
+                CompletedImports = [],
                 LastError = null,
             });
             return prepared;
@@ -609,11 +627,6 @@ public sealed class TripoPanelSession : IAsyncDisposable
                     current.GenerationRetryRequired,
                     current.GenerationOperationStatus,
                     "generation");
-                await EnsureSessionStillActiveAsync(
-                        client,
-                        prepared.DocumentSessionId,
-                        token)
-                    .ConfigureAwait(false);
                 UpdateState(state => state with
                 {
                     GenerationDispatchAttempted = true,
@@ -626,7 +639,6 @@ public sealed class TripoPanelSession : IAsyncDisposable
                                     prepared.Prompt,
                                     prepared.FaceLimit,
                                     prepared.WithMaterials,
-                                    prepared.DocumentSessionId,
                                     prepared.OperationId,
                                     ConfirmExternalCost: true,
                                     RequireExistingOperation:
@@ -754,7 +766,6 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 generationTaskId,
                 faceLimit,
                 withMaterials,
-                state.PreparedGeneration!.DocumentSessionId,
                 Guid.NewGuid().ToString("D"));
             UpdateState(current => current with
             {
@@ -766,6 +777,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 PreparedImport = null,
                 ImportDispatchAttempted = false,
                 ImportReceipt = null,
+                CompletedImports = [],
                 LastError = null,
             });
             return prepared;
@@ -803,11 +815,6 @@ public sealed class TripoPanelSession : IAsyncDisposable
                     current.ConversionRetryRequired,
                     current.ConversionOperationStatus,
                     "conversion");
-                await EnsureSessionStillActiveAsync(
-                        client,
-                        prepared.DocumentSessionId,
-                        token)
-                    .ConfigureAwait(false);
                 UpdateState(state => state with
                 {
                     ConversionDispatchAttempted = true,
@@ -821,7 +828,6 @@ public sealed class TripoPanelSession : IAsyncDisposable
                                         prepared.SourceTaskId,
                                         prepared.FaceLimit,
                                         prepared.WithMaterials,
-                                        prepared.DocumentSessionId,
                                         prepared.OperationId,
                                         ConfirmExternalCost: true,
                                         RequireExistingOperation:
@@ -936,22 +942,26 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 state.ConversionStatus,
                 state.DurableConversionTaskId,
                 "conversion");
-            if (state.PreparedImport is not null ||
-                state.ImportDispatchAttempted ||
-                state.ImportReceipt is not null)
+            if ((state.PreparedImport is not null ||
+                 state.ImportDispatchAttempted ||
+                 state.ImportReceipt is not null) &&
+                !state.HasConfirmedImportReceipt)
             {
                 throw new InvalidOperationException(
-                    "Use the prepared import operation or start a new workflow before " +
-                    "creating another operation ID.");
+                    "Use or reconcile the prepared import operation before creating " +
+                    "another operation ID.");
             }
 
+            Tripo.Bridge.HostContextReceipt context = RequireContext();
             PreparedObjImport prepared = new(
                 conversionTaskId,
                 name,
-                state.PreparedConversion!.DocumentSessionId,
+                context.DocumentSessionId,
                 Guid.NewGuid().ToString("D"),
                 normalizedMode,
-                applyMaterials);
+                applyMaterials,
+                context.DocumentTitle,
+                context.Host);
             UpdateState(current => current with
             {
                 PreparedImport = prepared,
@@ -1010,10 +1020,13 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 });
                 ValidateImportReceipt(
                     prepared,
-                    receipt,
-                    RequireContext());
+                    receipt);
                 UpdateState(state => state with
                 {
+                    CompletedImports = AppendCompletedImport(
+                        state.CompletedImports,
+                        prepared,
+                        receipt),
                     LastError = null,
                 });
             },
@@ -2373,19 +2386,34 @@ public sealed class TripoPanelSession : IAsyncDisposable
 
     private static void ValidateImportReceipt(
         PreparedObjImport prepared,
-        Tripo.Bridge.HostControlObjTaskImportReceipt receipt,
-        Tripo.Bridge.HostContextReceipt context)
+        Tripo.Bridge.HostControlObjTaskImportReceipt receipt)
     {
         string? issue = TripoPanelState.GetImportReceiptIssue(
             prepared,
-            receipt,
-            context);
+            receipt);
         if (issue is not null)
         {
             throw new InvalidOperationException(
                 "The import receipt " + issue +
                 ". Preserve the UUID and inspect the host before retrying.");
         }
+    }
+
+    private static IReadOnlyList<CompletedObjImport> AppendCompletedImport(
+        IReadOnlyList<CompletedObjImport> completedImports,
+        PreparedObjImport prepared,
+        Tripo.Bridge.HostControlObjTaskImportReceipt receipt)
+    {
+        if (completedImports.Any(
+                completed => string.Equals(
+                    completed.Prepared.OperationId,
+                    prepared.OperationId,
+                    StringComparison.Ordinal)))
+        {
+            return completedImports;
+        }
+
+        return [.. completedImports, new CompletedObjImport(prepared, receipt)];
     }
 
     private void UpdateState(Func<TripoPanelState, TripoPanelState> update)

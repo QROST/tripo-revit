@@ -492,9 +492,6 @@ internal sealed class TripoRevitWindow : Window
                         Tripo.HostUi.LoadedTripoPanelRecoveryHint loaded in
                         snapshot.Hints)
                     {
-                        lines.Add(
-                            "Document session: " +
-                            loaded.Hint.DocumentSessionId);
                         allPaidInspectionsSucceeded &=
                             await AppendPaidRecoveryStatusAsync(
                             lines,
@@ -510,7 +507,9 @@ internal sealed class TripoRevitWindow : Window
                             lines.Add(
                                 "Import: manual Revit reconciliation required; " +
                                 "UUID " +
-                                loaded.Hint.Import.OperationId);
+                                loaded.Hint.Import.OperationId +
+                                "; target session " +
+                                loaded.Hint.Import.DocumentSessionId);
                         }
                     }
 
@@ -802,14 +801,19 @@ internal sealed class TripoRevitWindow : Window
             ImportModeOption mode =
                 _importMode.SelectedItem as ImportModeOption ??
                 ImportModeOption.All[0];
-            _ = _session.State.PreparedImport ??
-                _session.PrepareImport(
+            Tripo.HostUi.PreparedObjImport prepared =
+                _session.State.PreparedImport is null ||
+                _session.State.HasConfirmedImportReceipt
+                    ? _session.PrepareImport(
                     _name.Text,
                     mode.Value,
-                    _applyMaterials.IsChecked == true);
+                    _applyMaterials.IsChecked == true)
+                    : _session.State.PreparedImport;
             UpdateControls(_session.State);
             await RunWithStatusAsync(
-                "Importing the prepared OBJ into Revit…",
+                "Importing the prepared OBJ into " +
+                prepared.TargetDocumentTitle +
+                "…",
                 () => _session.ImportPreparedAsync());
         }
         catch (Exception exception)

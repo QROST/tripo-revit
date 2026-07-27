@@ -6,8 +6,11 @@ namespace Tripo.Revit;
 
 public sealed class TripoRevitApplication : IExternalApplication, IDisposable
 {
+    private Autodesk.Revit.ApplicationServices.ControlledApplication?
+        _controlledApplication;
     private ExternalEvent? _externalEvent;
     private RevitExternalEventPump? _eventPump;
+    private RevitDocumentSessions? _documentSessions;
     private Tripo.Bridge.NamedPipeBridgeServer? _bridgeServer;
     private Tripo.Bridge.HostSidecarProcessManager? _sidecarManager;
     private RevitPanelController? _panelController;
@@ -19,9 +22,15 @@ public sealed class TripoRevitApplication : IExternalApplication, IDisposable
             _eventPump = new RevitExternalEventPump();
             _externalEvent = ExternalEvent.Create(_eventPump);
             _eventPump.Attach(_externalEvent);
+            _documentSessions = new RevitDocumentSessions();
+            _controlledApplication = application.ControlledApplication;
+            _controlledApplication.DocumentClosing +=
+                _documentSessions.OnDocumentClosing;
+            _controlledApplication.DocumentClosed +=
+                _documentSessions.OnDocumentClosed;
             RevitBridgeDispatcher dispatcher = new(
                 _eventPump,
-                new RevitDocumentSessions());
+                _documentSessions);
             _bridgeServer = new Tripo.Bridge.NamedPipeBridgeServer(
                 "revit",
                 "2026",
@@ -72,6 +81,19 @@ public sealed class TripoRevitApplication : IExternalApplication, IDisposable
 
     public void Dispose()
     {
+        Autodesk.Revit.ApplicationServices.ControlledApplication?
+            controlledApplication =
+                Interlocked.Exchange(ref _controlledApplication, null);
+        RevitDocumentSessions? documentSessions =
+            Interlocked.Exchange(ref _documentSessions, null);
+        if (controlledApplication is not null && documentSessions is not null)
+        {
+            controlledApplication.DocumentClosing -=
+                documentSessions.OnDocumentClosing;
+            controlledApplication.DocumentClosed -=
+                documentSessions.OnDocumentClosed;
+        }
+
         RevitPanelController? panelController =
             Interlocked.Exchange(ref _panelController, null);
         if (panelController is not null)

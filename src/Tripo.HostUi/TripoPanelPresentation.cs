@@ -200,6 +200,8 @@ public sealed class TripoPanelPresentation
         bool conversionSucceeded =
             state.HasSuccessfulConversion;
         bool importReceiptConfirmed = IsConfirmedImport(state);
+        bool canPrepareImport =
+            state.PreparedImport is null || importReceiptConfirmed;
         bool recoveryBlocked = recovery.HasBlock;
         bool remoteTaskNeedsReview =
             state.HasNonTerminalRemoteTask;
@@ -216,6 +218,8 @@ public sealed class TripoPanelPresentation
         bool promptValid = IsPromptValid(prompt);
         bool faceLimitValid = TryParseFaceLimit(faceLimitText, out _);
         bool objectNameValid = IsObjectNameValid(objectName);
+        string importTarget =
+            state.Context?.DocumentTitle ?? host;
         string? generationTaskId =
             state.DurableGenerationTaskId;
         string? conversionTaskId =
@@ -304,7 +308,9 @@ public sealed class TripoPanelPresentation
                 state.PreparedImport?.OperationId ?? "Not prepared",
             ImportStatus = BuildImportStatus(state, host),
             ImportReceiptDetails = BuildImportReceiptDetails(state),
-            ImportReceiptDetailsVisible = state.ImportReceipt is not null,
+            ImportReceiptDetailsVisible =
+                state.ImportReceipt is not null ||
+                state.CompletedImports.Count > 0,
             ResultStatus = WithNoticePrefix(
                 resultStatus,
                 resultKind),
@@ -446,18 +452,18 @@ public sealed class TripoPanelPresentation
                 !recoveryBlocked &&
                 state.CredentialStatus?.HasApiKey == true &&
                 conversionSucceeded &&
-                (state.PreparedImport is null
+                (canPrepareImport
                     ? objectNameValid
                     : state.CanDispatchPreparedImport),
-            ImportText = state.PreparedImport is null
-                ? $"Import into {host}"
+            ImportText = canPrepareImport
+                ? importReceiptConfirmed
+                    ? $"Import again into {importTarget}"
+                    : $"Import into {importTarget}"
                 : state.ImportRetryRequired
                     ? "Retry same UUID"
                     : state.CanDispatchPreparedImport
                         ? "Import prepared"
-                        : importReceiptConfirmed
-                            ? "Imported"
-                            : "Review import receipt",
+                        : "Review import receipt",
             ImportHelp = BuildImportHelp(
                 state,
                 uiBusy,
@@ -484,15 +490,15 @@ public sealed class TripoPanelPresentation
             NameEnabled =
                 ready &&
                 conversionSucceeded &&
-                state.PreparedImport is null,
+                canPrepareImport,
             ImportModeEnabled =
                 ready &&
                 conversionSucceeded &&
-                state.PreparedImport is null,
+                canPrepareImport,
             ApplyMaterialsEnabled =
                 ready &&
                 conversionSucceeded &&
-                state.PreparedImport is null &&
+                canPrepareImport &&
                 state.PreparedConversion?.WithMaterials == true,
         };
     }
@@ -836,7 +842,8 @@ public sealed class TripoPanelPresentation
         if (state.ImportReceipt is not null)
         {
             return state.HasConfirmedImportReceipt
-                ? $"This operation already has a confirmed {host} import receipt."
+                ? $"Create a fresh import UUID for the active {host} document; " +
+                  "the confirmed receipt remains in this workflow's import history."
                 : "The observed import receipt does not confirm the prepared " +
                   "operation. Inspect it, then retry the same UUID.";
         }
@@ -1107,15 +1114,15 @@ public sealed class TripoPanelPresentation
         TripoPanelRecoveryHint hint)
     {
         ArgumentNullException.ThrowIfNull(hint);
-        List<string> lines =
-        [
-            $"Document session: {hint.DocumentSessionId}",
-        ];
+        List<string> lines = [];
         AddPaidRecoveryDetails(lines, "Generation", hint.Generation);
         AddPaidRecoveryDetails(lines, "Conversion", hint.Conversion);
         if (hint.Import is not null)
         {
             TripoPanelImportRecoveryHint import = hint.Import;
+            lines.Add(
+                "Import target document session: " +
+                import.DocumentSessionId);
             lines.Add("Import UUID: " + import.OperationId);
             lines.Add(
                 "Import conversion task: " +
@@ -1394,8 +1401,15 @@ public sealed class TripoPanelPresentation
             state.ImportReceipt?.HostReceipt;
         if (receipt is null)
         {
-            return state.ImportDispatchAttempted
-                ? "Import outcome not yet confirmed"
+            if (state.ImportDispatchAttempted)
+            {
+                return "Import outcome not yet confirmed";
+            }
+
+            return state.CompletedImports.Count > 0
+                ? $"{state.CompletedImports.Count} completed " +
+                  $"{(state.CompletedImports.Count == 1 ? "import" : "imports")} " +
+                  $"· Ready for the active {host} document"
                 : "Not imported";
         }
 
@@ -1424,18 +1438,33 @@ public sealed class TripoPanelPresentation
             state.ImportReceipt?.HostReceipt;
         if (receipt is null)
         {
-            return "No import receipt is available.";
+            if (state.CompletedImports.Count == 0)
+            {
+                return "No import receipt is available.";
+            }
+
+            List<string> history = ["Completed imports:"];
+            foreach (CompletedObjImport completed in state.CompletedImports)
+            {
+                string target = string.IsNullOrWhiteSpace(
+                    completed.Prepared.TargetDocumentTitle)
+                    ? completed.Prepared.DocumentSessionId
+                    : completed.Prepared.TargetDocumentTitle;
+                history.Add(
+                    $"• {target} · {completed.Receipt.HostReceipt.CreatedId} · " +
+                    completed.Prepared.OperationId);
+            }
+
+            return string.Join(Environment.NewLine, history);
         }
 
         string receiptConfirmation = "REQUIRES INSPECTION";
         if (state.PreparedImport is not null &&
-            state.Context is not null &&
             state.ImportReceipt is not null)
         {
             string? issue = TripoPanelState.GetImportReceiptIssue(
                 state.PreparedImport,
-                state.ImportReceipt,
-                state.Context);
+                state.ImportReceipt);
             receiptConfirmation = issue is null
                 ? "confirmed"
                 : "REQUIRES INSPECTION · " + BoundText(issue);

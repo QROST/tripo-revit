@@ -6,8 +6,11 @@ Tripo-Revit is an independent community adapter for Autodesk Revit 2026. AEC
 users can run the complete text-to-model workflow from a modeless WPF window;
 agentic clients can use the same workflow through MCP. Validated OBJ output —
 geometry only, or with baked-diffuse materials and textures — is imported into
-the exact active Revit project as a Generic Models `DirectShape`, or as a
-generated, loaded, and placed Family instance.
+the writable Revit project that is active when import is requested, as a Generic
+Models `DirectShape` or as a generated, loaded, and placed Family instance.
+Generation and conversion are not bound to a Revit project, so one successful
+conversion can be imported into multiple projects with a fresh import UUID for
+each target.
 
 It is not an official Tripo or Autodesk product.
 
@@ -89,7 +92,7 @@ Building the host project also builds the matching sidecar and copies its
 complete output into
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`. The separate
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` output is needed only for the optional MCP
-path. Bridge protocol v2 and host-control protocol v3 have no
+path. Bridge protocol v2 and host-control protocol v4 have no
 backward-compatibility shim, so deploy all components from the same repository
 revision.
 
@@ -261,9 +264,11 @@ the paid-operation journal during recovery.
    **Add-Ins → Tripo → Tripo 3D**. Repeated clicks activate the same modeless
    window. If it owns workflow state, clicking the close button hides it
    instead of discarding the session; use the ribbon command to show it again.
-2. The window automatically connects to the exact active project.
-   **Connect / Refresh** can refresh it explicitly. A different document
-   session is rejected while this window still owns workflow state.
+2. The window automatically connects to the active project.
+   **Connect / Refresh** can refresh it explicitly. Generation and conversion
+   state survives project switches. An import is bound only after its fresh UUID
+   is prepared for the currently active target; switching is blocked only while
+   that import's dispatch outcome is unresolved.
 3. If no key is usable, paste one into **API key…** and choose persistent or
    session-only storage. A saved key can be explicitly removed from the same
    header; environment-provided keys are reported separately. Create keys at
@@ -277,9 +282,11 @@ the paid-operation journal during recovery.
    confirmation. Refresh conversion until `success`.
 7. Choose **Revit family (recommended)** or **DirectShape mesh**, name the
    object, and choose whether the import should apply baked materials from the
-   OBJ bundle. Then click **Import into Revit**. The final receipt reports the
-   actual created-element, material, and texture counts; a request for
-   materials never becomes a claim that they were present.
+   OBJ bundle. Then click the import button, which names the active target
+   project. The final receipt reports the actual created-element, material, and
+   texture counts; a request for materials never becomes a claim that they were
+   present. Activate another writable project and reconnect to import the same
+   conversion there under a new import UUID.
 
 The three numbered stages show only their current actionable status. Expand
 **Workflow details and durable IDs** to copy document/session IDs, operation
@@ -376,9 +383,10 @@ returns:
 - the exact ephemeral `documentSessionId`; and
 - the supported host capabilities.
 
-Retain `documentSessionId` unchanged for later tools. If the active document
-changes, call `tripo_host_context` again and do not silently continue against a
-different project.
+Use `documentSessionId` only for an import into that exact active project.
+Generation, image upload/generation, conversion, task status, and operation
+status are project-independent. Call `tripo_host_context` again immediately
+after every target change and before preparing that import.
 
 There is no HTTP health endpoint. If multiple Revit processes are running,
 discovery returns `host_ambiguous` instead of guessing. Set `TRIPO_HOST_PID` to
@@ -393,10 +401,10 @@ The MCP front door exposes the same shared workflow as these eight tools:
 | `tripo_host_context` | none | Reads the connected Revit process and exact active-document session. No Tripo API call. |
 | `tripo_task_status` | `taskId` | Queries one existing Tripo task. |
 | `tripo_operation_status` | `operationId` | Reads a durable local paid-operation record. No Tripo or Revit call. |
-| `tripo_create_text_task` | `prompt`, `faceLimit`, `withMaterials`, `documentSessionId`, `operationId`, `confirmExternalCost` | Creates one text-to-model task. `withMaterials=true` requests textured PBR generation (`texture`/`pbr`); `false` stays geometry-only. May consume credits. |
+| `tripo_create_text_task` | `prompt`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost` | Creates one project-independent text-to-model task. `withMaterials=true` requests textured PBR generation (`texture`/`pbr`); `false` stays geometry-only. May consume credits. |
 | `tripo_stage_local_image` | `localImagePath` | Validates and privately snapshots one local PNG/JPEG and returns an opaque descriptor. No Tripo call. |
-| `tripo_create_image_task` | `transferId`, `sha256`, `byteLength`, `mediaType`, `faceLimit`, `withMaterials`, `documentSessionId`, `operationId`, `confirmExternalCost` | Uploads one staged image and creates an image-to-model task with durable upload/generation checkpoints. Copy the four descriptor fields exactly from `tripo_stage_local_image`. May consume credits. |
-| `tripo_create_obj_conversion` | `sourceTaskId`, `faceLimit`, `withMaterials`, `documentSessionId`, `operationId`, `confirmExternalCost` | Creates one OBJ conversion. `withMaterials=true` requests an OBJ bundle with a baked-diffuse MTL and image textures (`bake=true`); `false` converts geometry only. May consume credits. |
+| `tripo_create_image_task` | `transferId`, `sha256`, `byteLength`, `mediaType`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost` | Uploads one staged image and creates a project-independent image-to-model task with durable upload/generation checkpoints. Copy the four descriptor fields exactly from `tripo_stage_local_image`. May consume credits. |
+| `tripo_create_obj_conversion` | `sourceTaskId`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost` | Creates one project-independent OBJ conversion. `withMaterials=true` requests an OBJ bundle with a baked-diffuse MTL and image textures (`bake=true`); `false` converts geometry only. May consume credits. |
 | `tripo_import_obj_task` | `conversionTaskId`, `name`, `documentSessionId`, `operationId`, `importMode` (default `native`), `applyMaterials` (default `false`) | Downloads, validates, and imports a successful OBJ conversion as a `DirectShape` or a Family instance. |
 
 Input boundaries:
@@ -406,7 +414,8 @@ Input boundaries:
 - imported `name`: 1–128 characters;
 - task IDs are used exactly as returned by Tripo: current `task_...`
   identifiers and canonical lowercase UUID responses are accepted;
-- `documentSessionId` must be the exact UUID from `tripo_host_context`;
+- import `documentSessionId` must be the exact UUID from the immediately
+  preceding `tripo_host_context`;
 - each `operationId` is a caller-generated UUID;
 - `importMode` is `native`, `mesh`, or `family`; this build rejects `instance` with
   `import_mode_unsupported`. `native` resolves to `family`.
@@ -417,24 +426,26 @@ possible external charge.
 
 ## Typical workflow
 
-1. Call `tripo_host_context` and retain its exact `documentSessionId`.
-2. Choose one generation branch:
+1. Choose one generation branch:
    - text: generate UUID A and, after explicit cost confirmation, call
      `tripo_create_text_task`;
    - local image: call `tripo_stage_local_image`, then generate UUID A and,
      after explicit cost confirmation, call `tripo_create_image_task`, copying
      the returned descriptor's `transferId`, `sha256`, `byteLength`, and
      `mediaType` into the four same-named arguments.
-3. Poll its returned task ID with `tripo_task_status` until it reports
+2. Poll its returned task ID with `tripo_task_status` until it reports
    `success` or a terminal failure. Stop on `failed`, `cancelled`, `banned`, or
    `expired`.
-4. Generate UUID B and, after a second explicit cost confirmation, call
+3. Generate UUID B and, after a second explicit cost confirmation, call
    `tripo_create_obj_conversion`.
-5. Poll the returned conversion task until it reports `success` or a terminal
+4. Poll the returned conversion task until it reports `success` or a terminal
    failure.
-6. Generate UUID C and call `tripo_import_obj_task`, choosing `importMode` and
-   `applyMaterials` as needed.
-7. Inspect the host receipt and the created `DirectShape` or Family instance.
+5. Activate the writable target project, call `tripo_host_context`, generate
+   UUID C, and call `tripo_import_obj_task` with that returned
+   `documentSessionId`, choosing `importMode` and `applyMaterials` as needed.
+6. Inspect the host receipt and the created `DirectShape` or Family instance.
+   To reuse the conversion in another project, repeat step 5 with the new
+   context and a new import UUID.
 
 For a material-bearing import, set `withMaterials=true` on both paid creation
 stages and `applyMaterials=true` on import. Keep all three false for a
@@ -447,8 +458,8 @@ caller-owned UUIDs. A committed import normally returns
 
 If a paid-stage response is lost, first use `tripo_operation_status` to inspect
 its local record. Retry with the original UUID, identical explicit arguments,
-API key, and document session only when the journal says creation can resume; a
-text-task retry must also keep the same effective model.
+and API key only when the journal says creation can resume; a text-task retry
+must also keep the same effective model.
 
 If an operation is `outcome_unknown`, do not automatically resend it or create
 a replacement UUID. Preserve the journal and inspect Tripo task or billing
@@ -463,14 +474,15 @@ Image creation checkpoints upload and generation separately. A durable
 generation records its stage and refuses automatic resend; preserve
 `image-transfers/` and the journal until manual reconciliation.
 
-Import recovery is deliberately different. Reuse the import UUID, conversion
-task and artifact content, name, resolved mode, and materials flag. If Revit
-restarted, reopen the same target project, call `tripo_host_context`, and pass
-the new `documentSessionId`; the host fingerprint excludes that ephemeral
-session ID while the active-session check still fails closed. For
-`already_exists` to survive the application restart, save the Revit project
-after the original import; if unsaved changes were lost, the retry can commit
-the import again because no persisted element remains.
+Import recovery is deliberately different. An unresolved retry reuses the
+import UUID, conversion task and artifact content, name, resolved mode, and
+materials flag for the same target project. If Revit restarted, reopen that
+target, call `tripo_host_context`, and pass the new `documentSessionId`; the
+host fingerprint excludes that ephemeral session ID while the active-session
+check still fails closed. A deliberate import into another project uses a new
+import UUID. For `already_exists` to survive the application restart, save the
+Revit project after the original import; if unsaved changes were lost, the
+retry can commit the import again because no persisted element remains.
 
 ## Revit import behavior
 
@@ -555,14 +567,12 @@ rejected. Then call `tripo_host_context` again.
 
 ### `document_changed`
 
-The active project no longer matches the retained session. Call
-`tripo_host_context` again. Paid-operation identity does not move to the new
-session. For a paid stage already sent or missing a response, first call
-`tripo_operation_status`. Preserve its original UUID and identity unless the
-journal reports definitive `request_rejected`; in that state, correct the
-credential and prepare a new UUID. An import retry may use the new session only
-after reopening the same target project and keeping the original import UUID,
-conversion task and content, name, resolved mode, and materials flag.
+The active project no longer matches an import target session. Generation and
+conversion are unaffected. Call `tripo_host_context` again before preparing a
+new import UUID for the newly active project. If an import dispatch is
+unresolved, return to its original target and keep the original import UUID,
+conversion task and content, name, resolved mode, and materials flag while
+reconciling it.
 
 ### `host_busy`
 

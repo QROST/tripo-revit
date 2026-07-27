@@ -110,41 +110,46 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
-    public async Task DocumentSwitchStopsPaidDispatchBeforeTheSidecarCreateCall()
+    public async Task DocumentSwitchDoesNotBlockPaidDispatch()
     {
         FakeHostControlClient client = new();
         await using Tripo.HostUi.TripoPanelSession session = CreateSession(client);
         await session.ConnectAsync();
-        session.PrepareGeneration("a chair", 10_000, withMaterials: false);
+        Tripo.HostUi.PreparedTextGeneration prepared =
+            session.PrepareGeneration(
+                "a chair",
+                10_000,
+                withMaterials: false);
         client.CurrentSessionId = Guid.NewGuid().ToString("D");
 
-        InvalidOperationException exception =
-            await Assert.ThrowsAsync<InvalidOperationException>(
-                () => session.DispatchPreparedGenerationAsync(
-                    userConfirmedExternalCost: true));
+        await session.DispatchPreparedGenerationAsync(
+            userConfirmedExternalCost: true);
 
-        Assert.Contains("active host document changed", exception.Message);
-        Assert.Equal(0, client.CreateTextCalls);
+        Assert.Equal(1, client.CreateTextCalls);
+        Assert.Equal(
+            prepared.OperationId,
+            session.State.GenerationReceipt?.OperationId);
     }
 
     [Fact]
-    public async Task ReconnectCannotMoveExistingWorkflowToAnotherDocument()
+    public async Task ReconnectRetargetsDocumentWithoutDiscardingRemoteWorkflow()
     {
         FakeHostControlClient client = new();
         await using Tripo.HostUi.TripoPanelSession session = CreateSession(client);
         await session.ConnectAsync();
-        string originalSessionId = session.State.Context!.DocumentSessionId;
-        session.PrepareGeneration("a chair", 10_000, withMaterials: false);
+        Tripo.HostUi.PreparedTextGeneration prepared =
+            session.PrepareGeneration(
+                "a chair",
+                10_000,
+                withMaterials: false);
         client.CurrentSessionId = Guid.NewGuid().ToString("D");
 
-        InvalidOperationException exception =
-            await Assert.ThrowsAsync<InvalidOperationException>(
-                () => session.ConnectAsync());
+        await session.ConnectAsync();
 
-        Assert.Contains("document changed", exception.Message);
         Assert.Equal(
-            originalSessionId,
+            client.CurrentSessionId,
             session.State.Context?.DocumentSessionId);
+        Assert.Equal(prepared, session.State.PreparedGeneration);
     }
 
     [Fact]
@@ -1465,6 +1470,100 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
+    public async Task CompletedConversionImportsIntoTwoDocumentsWithFreshUuids()
+    {
+        FakeHostControlClient client = new()
+        {
+            Host = "revit",
+            CurrentDocumentTitle = "Project A",
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        session.PrepareGeneration(
+            "a pavilion",
+            10_000,
+            withMaterials: true);
+        await session.DispatchPreparedGenerationAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshGenerationStatusAsync();
+        session.PrepareConversion(10_000, withMaterials: true);
+        await session.DispatchPreparedConversionAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshConversionStatusAsync();
+
+        Tripo.HostUi.PreparedObjImport first =
+            session.PrepareImport(
+                "Pavilion",
+                "native",
+                applyMaterials: true);
+        await session.ImportPreparedAsync();
+
+        client.CurrentSessionId = Guid.NewGuid().ToString("D");
+        client.CurrentDocumentTitle = "Project B";
+        await session.ConnectAsync();
+
+        Assert.Null(session.State.PreparedImport);
+        Assert.Single(session.State.CompletedImports);
+        Assert.True(session.State.HasSuccessfulConversion);
+        Tripo.HostUi.PreparedObjImport second =
+            session.PrepareImport(
+                "Pavilion",
+                "native",
+                applyMaterials: true);
+        Assert.NotEqual(first.OperationId, second.OperationId);
+        Assert.Equal(client.CurrentSessionId, second.DocumentSessionId);
+        Assert.Equal("Project B", second.TargetDocumentTitle);
+
+        await session.ImportPreparedAsync();
+
+        Assert.Equal(2, client.ImportCalls);
+        Assert.Equal(2, session.State.CompletedImports.Count);
+    }
+
+    [Fact]
+    public async Task UnresolvedImportDispatchCannotRetargetAnotherDocument()
+    {
+        FakeHostControlClient client = new()
+        {
+            Host = "revit",
+            FailFirstImportResponse = true,
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        string originalSessionId =
+            session.State.Context!.DocumentSessionId;
+        session.PrepareGeneration(
+            "a pavilion",
+            10_000,
+            withMaterials: false);
+        await session.DispatchPreparedGenerationAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshGenerationStatusAsync();
+        session.PrepareConversion(10_000, withMaterials: false);
+        await session.DispatchPreparedConversionAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshConversionStatusAsync();
+        session.PrepareImport(
+            "Pavilion",
+            "native",
+            applyMaterials: false);
+        await Assert.ThrowsAsync<Tripo.Bridge.HostControlCallException>(
+            () => session.ImportPreparedAsync());
+        client.CurrentSessionId = Guid.NewGuid().ToString("D");
+
+        InvalidOperationException error =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => session.ConnectAsync());
+
+        Assert.Contains("import outcome is unresolved", error.Message);
+        Assert.Equal(
+            originalSessionId,
+            session.State.Context?.DocumentSessionId);
+    }
+
+    [Fact]
     public async Task ImportReceiptIdentityMismatchRemainsUnresolved()
     {
         FakeHostControlClient client = new()
@@ -1730,7 +1829,6 @@ public sealed class TripoPanelSessionTests
             "a chair",
             10_000,
             false,
-            documentSessionId,
             "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
         Tripo.HostUi.TripoPanelState firstSend =
             Tripo.HostUi.TripoPanelState.Initial with
@@ -1852,16 +1950,16 @@ public sealed class TripoPanelSessionTests
                     "a chair",
                     10_000,
                     withMaterials: false);
-            TaskCompletionSource<bool> hostContextEntered =
+            TaskCompletionSource<bool> createTextEntered =
                 new(TaskCreationOptions.RunContinuationsAsynchronously);
-            TaskCompletionSource<bool> continueHostContext =
+            TaskCompletionSource<bool> continueCreateText =
                 new(TaskCreationOptions.RunContinuationsAsynchronously);
-            client.HostContextEntered = hostContextEntered;
-            client.ContinueHostContext = continueHostContext;
+            client.CreateTextEntered = createTextEntered;
+            client.ContinueCreateText = continueCreateText;
 
             Task dispatch = session.DispatchPreparedGenerationAsync(
                 userConfirmedExternalCost: true);
-            await hostContextEntered.Task.WaitAsync(
+            await createTextEntered.Task.WaitAsync(
                 TimeSpan.FromSeconds(5));
 
             try
@@ -1873,7 +1971,7 @@ public sealed class TripoPanelSessionTests
             }
             finally
             {
-                continueHostContext.TrySetResult(true);
+                continueCreateText.TrySetResult(true);
             }
 
             await dispatch;
@@ -2067,12 +2165,12 @@ public sealed class TripoPanelSessionTests
                     new Tripo.HostUi.TripoPanelRecoveryStore("revit", root));
             await dispatchSession.ConnectAsync();
             await credentialSession.ConnectAsync();
-            TaskCompletionSource<bool> hostContextEntered =
+            TaskCompletionSource<bool> createTextEntered =
                 new(TaskCreationOptions.RunContinuationsAsynchronously);
-            TaskCompletionSource<bool> continueHostContext =
+            TaskCompletionSource<bool> continueCreateText =
                 new(TaskCreationOptions.RunContinuationsAsynchronously);
-            dispatchClient.HostContextEntered = hostContextEntered;
-            dispatchClient.ContinueHostContext = continueHostContext;
+            dispatchClient.CreateTextEntered = createTextEntered;
+            dispatchClient.ContinueCreateText = continueCreateText;
             dispatchSession.PrepareGeneration(
                 "a chair",
                 10_000,
@@ -2080,7 +2178,7 @@ public sealed class TripoPanelSessionTests
 
             Task dispatch = dispatchSession.DispatchPreparedGenerationAsync(
                 userConfirmedExternalCost: true);
-            await hostContextEntered.Task.WaitAsync(
+            await createTextEntered.Task.WaitAsync(
                 TimeSpan.FromSeconds(5));
 
             try
@@ -2094,7 +2192,7 @@ public sealed class TripoPanelSessionTests
             }
             finally
             {
-                continueHostContext.TrySetResult(true);
+                continueCreateText.TrySetResult(true);
             }
 
             await dispatch;
@@ -2926,7 +3024,6 @@ public sealed class TripoPanelSessionTests
                 firstHint with
                 {
                     RecoveryId = Guid.NewGuid().ToString("D"),
-                    DocumentSessionId = Guid.NewGuid().ToString("D"),
                     UpdatedAtUtc = DateTimeOffset.UtcNow,
                     Generation = firstHint.Generation! with
                     {
@@ -3200,7 +3297,6 @@ public sealed class TripoPanelSessionTests
                             "a chair",
                             10_000,
                             false,
-                            documentSessionId,
                             operationId),
                     GenerationDispatchAttempted = true,
                     GenerationReceipt =
@@ -3317,7 +3413,6 @@ public sealed class TripoPanelSessionTests
                 new DateTimeOffset(
                     ownerProcess.StartTime.ToUniversalTime(),
                     TimeSpan.Zero),
-                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                 DateTimeOffset.UtcNow,
                 new Tripo.HostUi.TripoPanelPaidRecoveryHint(
                     "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -3481,7 +3576,10 @@ public sealed class TripoPanelSessionTests
             Assert.Equal(
                 "task_source123",
                 hint.Generation?.TaskId);
-            Assert.Equal(2, hint.SchemaVersion);
+            Assert.Equal(
+                Tripo.HostUi.TripoPanelRecoveryStore.CurrentSchemaVersion,
+                hint.SchemaVersion);
+            Assert.Equal(import.DocumentSessionId, hint.Import.DocumentSessionId);
             Assert.DoesNotContain(
                 "sourceTaskId",
                 recoveryJson,
@@ -3492,6 +3590,66 @@ public sealed class TripoPanelSessionTests
                 Directory.GetFiles(
                     Path.Combine(root, "ui-recovery", "rhino"),
                     "*.json"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Version2RecoveryMovesDocumentSessionToImportAndCanArchive()
+    {
+        string root = CreateTemporaryRoot();
+        try
+        {
+            const string recoveryId =
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+            const string documentSessionId =
+                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+            string directory =
+                Path.Combine(root, "ui-recovery", "rhino");
+            Directory.CreateDirectory(directory);
+            System.Text.Json.Nodes.JsonObject legacy = new()
+            {
+                ["schemaVersion"] = 2,
+                ["recoveryId"] = recoveryId,
+                ["host"] = "rhino",
+                ["ownerProcessId"] = int.MaxValue,
+                ["ownerProcessStartedAtUtc"] = DateTimeOffset.UnixEpoch,
+                ["documentSessionId"] = documentSessionId,
+                ["updatedAtUtc"] = DateTimeOffset.UtcNow,
+                ["generation"] = null,
+                ["conversion"] = null,
+                ["import"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["operationId"] =
+                        "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                    ["conversionTaskId"] = "task_conversion123",
+                    ["name"] = "Legacy Chair",
+                    ["importMode"] = "native",
+                    ["applyMaterials"] = true,
+                    ["dispatchAttempted"] = true,
+                    ["receiptKnown"] = false,
+                },
+            };
+            string path = Path.Combine(directory, recoveryId + ".json");
+            File.WriteAllText(path, legacy.ToJsonString());
+            Tripo.Bridge.BridgePaths.SetPrivateFileMode(path);
+            using Tripo.HostUi.TripoPanelRecoveryStore store =
+                new("rhino", root);
+
+            Tripo.HostUi.LoadedTripoPanelRecoveryHint loaded =
+                Assert.Single(store.LoadStale().Hints);
+
+            Assert.Equal(
+                Tripo.HostUi.TripoPanelRecoveryStore.CurrentSchemaVersion,
+                loaded.Hint.SchemaVersion);
+            Assert.Equal(
+                documentSessionId,
+                loaded.Hint.Import?.DocumentSessionId);
+            store.Archive(loaded);
+            Assert.Empty(store.LoadStale().Hints);
         }
         finally
         {
@@ -3532,7 +3690,6 @@ public sealed class TripoPanelSessionTests
                 "rhino",
                 int.MaxValue,
                 DateTimeOffset.UnixEpoch,
-                "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
                 DateTimeOffset.UtcNow,
                 new Tripo.HostUi.TripoPanelPaidRecoveryHint(
                     "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -3605,13 +3762,13 @@ public sealed class TripoPanelSessionTests
                 "rhino",
                 int.MaxValue,
                 DateTimeOffset.UnixEpoch,
-                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                 DateTimeOffset.UtcNow,
                 null,
                 null,
                 new Tripo.HostUi.TripoPanelImportRecoveryHint(
                     "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
                     "task_conversion123",
+                    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                     "Chair",
                     "native",
                     ApplyMaterials: true,
@@ -3662,7 +3819,6 @@ public sealed class TripoPanelSessionTests
                 "rhino",
                 int.MaxValue,
                 DateTimeOffset.UnixEpoch,
-                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                 DateTimeOffset.UtcNow,
                 includeNonDurableGeneration
                     ? new Tripo.HostUi.TripoPanelPaidRecoveryHint(
@@ -3723,7 +3879,6 @@ public sealed class TripoPanelSessionTests
                 "rhino",
                 int.MaxValue,
                 DateTimeOffset.UnixEpoch,
-                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                 DateTimeOffset.UtcNow,
                 new Tripo.HostUi.TripoPanelPaidRecoveryHint(
                     "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -3956,6 +4111,8 @@ public sealed class TripoPanelSessionTests
 
         public string Host { get; set; } = "rhino";
 
+        public string CurrentDocumentTitle { get; set; } = "Test.3dm";
+
         public bool FailFirstTextResponse { get; set; }
 
         public string FirstTextFailureCode { get; set; } =
@@ -3995,6 +4152,10 @@ public sealed class TripoPanelSessionTests
         public TaskCompletionSource<bool>? HostContextEntered { get; set; }
 
         public TaskCompletionSource<bool>? ContinueHostContext { get; set; }
+
+        public TaskCompletionSource<bool>? CreateTextEntered { get; set; }
+
+        public TaskCompletionSource<bool>? ContinueCreateText { get; set; }
 
         public TaskCompletionSource<bool>? TaskStatusEntered { get; set; }
 
@@ -4121,17 +4282,23 @@ public sealed class TripoPanelSessionTests
                 "8-test",
                 _hostProcessId,
                 CurrentSessionId,
-                "Test.3dm",
+                CurrentDocumentTitle,
                 "Meters",
                 []);
         }
 
-        public Task<Tripo.Bridge.HostControlTextTaskCreationReceipt>
+        public async Task<Tripo.Bridge.HostControlTextTaskCreationReceipt>
             CreateTextTaskAsync(
                 Tripo.Bridge.HostControlCreateTextTaskRequest request,
                 CancellationToken cancellationToken)
         {
             BeforeCreateTextCall?.Invoke(request);
+            CreateTextEntered?.TrySetResult(true);
+            if (ContinueCreateText is not null)
+            {
+                await ContinueCreateText.Task.WaitAsync(cancellationToken);
+            }
+
             CreateTextCalls++;
             TextRequests.Add(request);
             if (TextFailureCode is not null ||
@@ -4146,12 +4313,11 @@ public sealed class TripoPanelSessionTests
                 DurableOperationStatus(
                     request.OperationId,
                     TextTaskId);
-            return Task.FromResult(
-                new Tripo.Bridge.HostControlTextTaskCreationReceipt(
-                    TextReceiptOperationIdOverride ??
-                    request.OperationId,
-                    TextReceiptTaskIdOverride ?? TextTaskId,
-                    "v3.1-20260211"));
+            return new Tripo.Bridge.HostControlTextTaskCreationReceipt(
+                TextReceiptOperationIdOverride ??
+                request.OperationId,
+                TextReceiptTaskIdOverride ?? TextTaskId,
+                "v3.1-20260211");
         }
 
         public async Task<Tripo.Bridge.HostControlTaskStatusReceipt>

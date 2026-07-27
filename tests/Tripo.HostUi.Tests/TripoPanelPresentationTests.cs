@@ -203,7 +203,6 @@ public sealed class TripoPanelPresentationTests
                     "A pavilion",
                     20_000,
                     false,
-                    DocumentSessionId,
                     operationId),
                 GenerationDispatchAttempted = true,
                 GenerationOperationStatus =
@@ -320,9 +319,33 @@ public sealed class TripoPanelPresentationTests
             "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
             "family",
             true);
+        Tripo.HostUi.PreparedObjConversion conversion = new(
+            "task_source123",
+            20_000,
+            true,
+            "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
         Tripo.HostUi.TripoPanelState state =
             ReadyState() with
             {
+                PreparedConversion = conversion,
+                ConversionReceipt =
+                    new Tripo.Bridge
+                        .HostControlObjConversionCreationReceipt(
+                            conversion.OperationId,
+                            conversion.SourceTaskId,
+                            prepared.ConversionTaskId,
+                            "OBJ"),
+                ConversionStatus =
+                    new Tripo.Bridge.HostControlTaskStatusReceipt(
+                        prepared.ConversionTaskId,
+                        "convert_model",
+                        "success",
+                        100,
+                        null,
+                        DateTimeOffset.UnixEpoch,
+                        DateTimeOffset.UnixEpoch,
+                        null,
+                        null),
                 PreparedImport = prepared,
                 ImportDispatchAttempted = true,
                 ImportReceipt =
@@ -367,6 +390,11 @@ public sealed class TripoPanelPresentationTests
         Assert.Contains(
             "2 triangles rejected",
             presentation.ResultStatus);
+        Assert.True(presentation.ImportEnabled);
+        Assert.Equal(
+            "Import again into Example Project",
+            presentation.ImportText);
+        Assert.Contains("fresh import UUID", presentation.ImportHelp);
         Assert.Equal(
             Tripo.HostUi.TripoPanelNoticeKind.Warning,
             presentation.ResultKind);
@@ -483,7 +511,6 @@ public sealed class TripoPanelPresentationTests
             "A pavilion",
             20_000,
             false,
-            DocumentSessionId,
             "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
         Tripo.HostUi.TripoPanelState resolved =
             ReadyState() with
@@ -544,7 +571,6 @@ public sealed class TripoPanelPresentationTests
             "A pavilion",
             20_000,
             false,
-            DocumentSessionId,
             "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
         Tripo.HostUi.TripoPanelState state =
             ReadyState() with
@@ -592,7 +618,6 @@ public sealed class TripoPanelPresentationTests
                     "A pavilion",
                     20_000,
                     false,
-                    DocumentSessionId,
                     operationId),
                 GenerationDispatchAttempted = true,
                 GenerationOperationStatus = ResumableOperation(operationId),
@@ -653,7 +678,6 @@ public sealed class TripoPanelPresentationTests
             "task_source123",
             20_000,
             false,
-            DocumentSessionId,
             "99999999-9999-4999-8999-999999999999");
         Tripo.HostUi.TripoPanelState state =
             ReadyState() with
@@ -699,7 +723,6 @@ public sealed class TripoPanelPresentationTests
             "A pavilion",
             20_000,
             false,
-            DocumentSessionId,
             "11111111-1111-4111-8111-111111111111");
         Tripo.HostUi.TripoPanelState state =
             ReadyState() with
@@ -773,7 +796,6 @@ public sealed class TripoPanelPresentationTests
                         "A pavilion",
                         20_000,
                         false,
-                        DocumentSessionId,
                         operationId),
                 GenerationDispatchAttempted = true,
                 GenerationOperationStatus =
@@ -875,7 +897,6 @@ public sealed class TripoPanelPresentationTests
             "A pavilion",
             20_000,
             false,
-            DocumentSessionId,
             "22222222-2222-4222-8222-222222222222");
         Tripo.HostUi.TripoPanelState state =
             ReadyState() with
@@ -913,13 +934,11 @@ public sealed class TripoPanelPresentationTests
             "A pavilion",
             20_000,
             true,
-            DocumentSessionId,
             "33333333-3333-4333-8333-333333333333");
         Tripo.HostUi.PreparedObjConversion conversion = new(
             "task_source123",
             20_000,
             true,
-            DocumentSessionId,
             "44444444-4444-4444-8444-444444444444");
         Tripo.HostUi.TripoPanelState state =
             ReadyState() with
@@ -1005,7 +1024,6 @@ public sealed class TripoPanelPresentationTests
                         "A pavilion",
                         20_000,
                         false,
-                        DocumentSessionId,
                         operationId),
                 GenerationDispatchAttempted = true,
             };
@@ -1042,7 +1060,6 @@ public sealed class TripoPanelPresentationTests
                         "task_source123",
                         20_000,
                         true,
-                        DocumentSessionId,
                         "45454545-4545-4454-8454-454545454545"),
                 ConversionReceipt =
                     new Tripo.Bridge
@@ -1119,13 +1136,13 @@ public sealed class TripoPanelPresentationTests
                             "revit",
                             123,
                             DateTimeOffset.UnixEpoch,
-                            DocumentSessionId,
                             DateTimeOffset.UnixEpoch,
                             null,
                             null,
                             new Tripo.HostUi.TripoPanelImportRecoveryHint(
                                 "66666666-6666-4666-8666-666666666666",
                                 "task_conversion123",
+                                DocumentSessionId,
                                 "Recovered Pavilion",
                                 "native",
                                 true,
@@ -1221,7 +1238,6 @@ public sealed class TripoPanelPresentationTests
                         "revit",
                         123,
                         DateTimeOffset.UnixEpoch,
-                        DocumentSessionId,
                         DateTimeOffset.UnixEpoch,
                         new Tripo.HostUi.TripoPanelPaidRecoveryHint(
                             "cccccccc-cccc-4ccc-8ccc-cccccccccccc",

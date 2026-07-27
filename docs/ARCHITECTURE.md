@@ -133,11 +133,12 @@ root-global sidecar execution lock admits only one credential mutation or paid
 create/convert workflow at a time, while each paid operation also has its own
 cross-process lock and an append-only, revisioned, checksummed JSONL journal.
 The request fingerprint is an HMAC keyed by the API credential over the API
-base, endpoint, exact serialized request bytes, and document session; the key
-and prompt are not stored in the journal. Same UUID plus the same fingerprint
+base, endpoint, and exact serialized request bytes; the key, prompt, and host
+document are not stored in the journal. Same UUID plus the same fingerprint
 replays a durable ID. Any mismatch fails closed before a POST, including a
 `TRIPO_MODEL` override or a flipped `withMaterials` changed between attempts
-with the same operation UUID.
+with the same operation UUID. The fingerprint and journal schemas are versioned
+so records from the former document-bound design cannot be resumed silently.
 
 Image creation extends that journal with
 `ImageUploadDispatching → ImageFileTokenPersisted →
@@ -157,9 +158,10 @@ proven safe. An unresolved or ambiguous dispatch disables reset and new-key
 changes so the UI cannot disguise a paid result. A definitive
 `request_rejected` receipt instead clears the rejected stage and requires a
 corrected credential plus a new UUID; generation rejection clears downstream
-work, while conversion rejection preserves successful generation. Conversion
-and import remain bound to the document session captured by generation;
-switching documents fails closed.
+work, while conversion rejection preserves successful generation. Generation,
+image generation, conversion, task inspection, and artifact staging are
+project-independent. Only an import UUID is bound to the exact active target
+document; a second project receives a fresh import UUID.
 
 A recovered Grasshopper definition may request same-UUID recovery only when
 the original local journal exists. `RequireExistingOperation` makes that
@@ -172,13 +174,15 @@ This is a local process-crash recovery and at-most-one automatic-dispatch bounda
 
 The API and signed-download paths use independent linked deadlines that cover response headers and the complete response body. A POST transport failure reports that remote creation may already have happened and remains non-retryable.
 
-The host-side import fingerprint is a separate identity from the journal fingerprint
-above: it serializes the same v2 import request with `DocumentSessionId` replaced by
-the empty string, so import identity is the bundle, units, name, mode, and materials
-flag — not the session. A legitimate cross-restart replay (same idempotency key, a
-new session) recovers instead of failing as a conflict; the still-separate
-active-session check keeps session correctness honest on its own. A retry with a
-different mode or materials flag fails closed as `idempotency_conflict`.
+The host-side import fingerprint is a separate identity from the journal
+fingerprint above: it serializes the import request with `DocumentSessionId`
+replaced by the empty string, so import identity is the bundle, units, name,
+mode, and materials flag — not the ephemeral session. A legitimate
+cross-restart replay for the same target (same idempotency key, a new session)
+recovers instead of failing as a conflict; the still-separate active-session
+check keeps session correctness honest on its own. A deliberate import into a
+different project uses a new idempotency key. A retry with a different mode or
+materials flag fails closed as `idempotency_conflict`.
 
 Materials travel as baked diffuse only: OBJ+MTL carries `Kd`/`d`/`Tr` color and alpha
 plus one `map_Kd` diffuse texture per material slot; normals are never carried
@@ -196,12 +200,13 @@ file is
 `<data root>/ui-recovery/<host>/<recovery-id>.json`, written through a
 same-directory temporary file and atomic replace. It contains canonical
 operation IDs, durable task IDs when known, journal state, and only the bounded
-name/mode/material fields required to identify an import retry. It excludes the
-prompt, credential, Authorization header, URL, fingerprint, artifact path, and
-host document path. Each panel session owns a distinct recovery ID, so
-multiple panels for one document cannot overwrite each other. The hint remains
-through a successful import and is removed only by an explicit live-workflow
-reset or archived after recovered reconciliation.
+name/mode/material fields and target session required to identify an import
+retry. A document session is never attached to generation or conversion
+recovery. The hint excludes the prompt, credential, Authorization header, URL,
+fingerprint, artifact path, and host document path. Each panel session owns a
+distinct recovery ID, so multiple panels cannot overwrite each other. The hint
+remains through a successful import and is removed only by an explicit
+live-workflow reset or archived after recovered reconciliation.
 
 The live session owns its hint in process. Once that session or process is gone,
 a later panel treats the hint as stale and blocks new workflows and credential

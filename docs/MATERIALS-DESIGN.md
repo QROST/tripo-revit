@@ -203,9 +203,10 @@ bare filename). Unknown keywords ignored. Bounded: max 64 materials, max
 
 ## Idempotency
 
-- The journal-side (paid-operation) fingerprint serializes the full request
-  including the document session, as before.
-- The HOST-side import fingerprint serializes the v2 request with
+- The journal-side paid-operation fingerprint serializes the exact remote
+  request without any host document identity, so generation and conversion can
+  be reused across projects.
+- The HOST-side import fingerprint serializes the import request with
   `DocumentSessionId` replaced by the empty string: import identity is the
   content (bundle, units, name, mode, materials), not the session. Session
   correctness is enforced separately by the active-session check, and this

@@ -55,7 +55,7 @@ host-specific MCP server          ← sole reader of TRIPO_API_KEY today
   └─ content-addressed OBJ(+MTL+texture) staging
   ↕ authenticated protocol-v2 current-user named pipe
 Rhino 8 plug-in / Revit 2026 add-in
-  ↕ exact document session
+  ↕ exact document session for import only
 mesh / block instance (Rhino), mesh / family (Revit)
 ```
 
@@ -423,7 +423,7 @@ Accepted default:
   `CanResumeCreation`.
 - If MCP and UI contend on the **same operation UUID**, existing fail-closed /
   replay rules apply.
-- If they contend on **different UUIDs** against the same document session,
+- If they contend on **different paid UUIDs** under the same local credential,
   the credential/workflow execution gate admits only one paid create/convert or
   key mutation at a time. A contending caller receives a typed refusal and must
   retry the unchanged UUID after the active operation checkpoints. This is not

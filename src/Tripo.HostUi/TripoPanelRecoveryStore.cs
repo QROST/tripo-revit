@@ -19,6 +19,7 @@ public sealed record TripoPanelPaidRecoveryHint(
 public sealed record TripoPanelImportRecoveryHint(
     string OperationId,
     string ConversionTaskId,
+    string DocumentSessionId,
     string Name,
     string ImportMode,
     bool ApplyMaterials,
@@ -31,7 +32,6 @@ public sealed record TripoPanelRecoveryHint(
     string Host,
     int OwnerProcessId,
     DateTimeOffset OwnerProcessStartedAtUtc,
-    string DocumentSessionId,
     DateTimeOffset UpdatedAtUtc,
     TripoPanelPaidRecoveryHint? Generation,
     TripoPanelPaidRecoveryHint? Conversion,
@@ -98,7 +98,7 @@ public sealed record TripoPanelRecoveryLoadResult(
 
 public sealed class TripoPanelRecoveryStore : IDisposable
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     public const int MaximumRecoveryFileBytes = 16 * 1024;
     public const int MaximumRecoveryFiles = 128;
 
@@ -126,6 +126,19 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         "host",
         "ownerProcessId",
         "ownerProcessStartedAtUtc",
+        "updatedAtUtc",
+        "generation",
+        "conversion",
+        "import",
+    ];
+
+    private static readonly HashSet<string> Version2RootProperties =
+    [
+        "schemaVersion",
+        "recoveryId",
+        "host",
+        "ownerProcessId",
+        "ownerProcessStartedAtUtc",
         "documentSessionId",
         "updatedAtUtc",
         "generation",
@@ -147,12 +160,45 @@ public sealed class TripoPanelRecoveryStore : IDisposable
     [
         "operationId",
         "conversionTaskId",
+        "documentSessionId",
         "name",
         "importMode",
         "applyMaterials",
         "dispatchAttempted",
         "receiptKnown",
     ];
+
+    private static readonly HashSet<string> Version2ImportProperties =
+    [
+        "operationId",
+        "conversionTaskId",
+        "name",
+        "importMode",
+        "applyMaterials",
+        "dispatchAttempted",
+        "receiptKnown",
+    ];
+
+    private sealed record Version2ImportRecoveryHint(
+        string OperationId,
+        string ConversionTaskId,
+        string Name,
+        string ImportMode,
+        bool ApplyMaterials,
+        bool DispatchAttempted,
+        bool ReceiptKnown);
+
+    private sealed record Version2RecoveryHint(
+        int SchemaVersion,
+        string RecoveryId,
+        string Host,
+        int OwnerProcessId,
+        DateTimeOffset OwnerProcessStartedAtUtc,
+        string DocumentSessionId,
+        DateTimeOffset UpdatedAtUtc,
+        TripoPanelPaidRecoveryHint? Generation,
+        TripoPanelPaidRecoveryHint? Conversion,
+        Version2ImportRecoveryHint? Import);
 
     private readonly string _host;
     private readonly string _rootDirectory;
@@ -193,25 +239,19 @@ public sealed class TripoPanelRecoveryStore : IDisposable
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(state);
-        if (state.Context is null)
+        if (state.Context is not null)
         {
-            return;
+            string contextHost =
+                Tripo.Bridge.BridgePaths.NormalizeHost(state.Context.Host);
+            if (!string.Equals(contextHost, _host, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The panel recovery store does not match the active host.");
+            }
         }
 
-        string contextHost =
-            Tripo.Bridge.BridgePaths.NormalizeHost(state.Context.Host);
-        if (!string.Equals(contextHost, _host, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "The panel recovery store does not match the active host.");
-        }
-
-        string documentSessionId =
-            CanonicalizeUuid(
-                state.Context.DocumentSessionId,
-                nameof(state.Context.DocumentSessionId));
         string path = GetHintPath(_recoveryId);
-        TripoPanelRecoveryHint? hint = BuildHint(state, documentSessionId);
+        TripoPanelRecoveryHint? hint = BuildHint(state);
         if (hint is null)
         {
             DeleteOwnedRegularFile(path);
@@ -537,9 +577,7 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         }
     }
 
-    private TripoPanelRecoveryHint? BuildHint(
-        TripoPanelState state,
-        string documentSessionId)
+    private TripoPanelRecoveryHint? BuildHint(TripoPanelState state)
     {
         TripoPanelPaidRecoveryHint? generation =
             BuildPaidHint(
@@ -584,6 +622,9 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                     ValidateTaskId(
                         state.PreparedImport.ConversionTaskId,
                         nameof(state.PreparedImport.ConversionTaskId)),
+                    CanonicalizeUuid(
+                        state.PreparedImport.DocumentSessionId,
+                        nameof(state.PreparedImport.DocumentSessionId)),
                     ValidateName(state.PreparedImport.Name),
                     ValidateImportMode(state.PreparedImport.ImportMode),
                     state.PreparedImport.ApplyMaterials,
@@ -608,7 +649,6 @@ public sealed class TripoPanelRecoveryStore : IDisposable
             _host,
             _ownerProcessId,
             _ownerProcessStartedAtUtc,
-            documentSessionId,
             DateTimeOffset.UtcNow,
             generation,
             conversion,
@@ -703,6 +743,20 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         }
 
         using JsonDocument document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty(
+                "schemaVersion",
+                out JsonElement schemaVersionElement) ||
+            !schemaVersionElement.TryGetInt32(out int schemaVersion))
+        {
+            throw new JsonException(
+                "The recovery hint has no valid schema version.");
+        }
+
+        if (schemaVersion == 2)
+        {
+            return ReadAndMigrateVersion2(document.RootElement, json);
+        }
+
         EnsureObjectProperties(
             document.RootElement,
             RootProperties,
@@ -726,6 +780,56 @@ public sealed class TripoPanelRecoveryStore : IDisposable
             ?? throw new JsonException("The recovery hint is null.");
         ValidateHint(hint);
         return hint;
+    }
+
+    private TripoPanelRecoveryHint ReadAndMigrateVersion2(
+        JsonElement root,
+        string json)
+    {
+        EnsureObjectProperties(
+            root,
+            Version2RootProperties,
+            "version 2 recovery hint");
+        EnsureOptionalObjectProperties(
+            root,
+            "generation",
+            PaidProperties);
+        EnsureOptionalObjectProperties(
+            root,
+            "conversion",
+            PaidProperties);
+        EnsureOptionalObjectProperties(
+            root,
+            "import",
+            Version2ImportProperties);
+        Version2RecoveryHint legacy =
+            JsonSerializer.Deserialize<Version2RecoveryHint>(
+                json,
+                RecoveryJsonOptions)
+            ?? throw new JsonException("The version 2 recovery hint is null.");
+        TripoPanelImportRecoveryHint? import = legacy.Import is null
+            ? null
+            : new TripoPanelImportRecoveryHint(
+                legacy.Import.OperationId,
+                legacy.Import.ConversionTaskId,
+                legacy.DocumentSessionId,
+                legacy.Import.Name,
+                legacy.Import.ImportMode,
+                legacy.Import.ApplyMaterials,
+                legacy.Import.DispatchAttempted,
+                legacy.Import.ReceiptKnown);
+        TripoPanelRecoveryHint migrated = new(
+            CurrentSchemaVersion,
+            legacy.RecoveryId,
+            legacy.Host,
+            legacy.OwnerProcessId,
+            legacy.OwnerProcessStartedAtUtc,
+            legacy.UpdatedAtUtc,
+            legacy.Generation,
+            legacy.Conversion,
+            import);
+        ValidateHint(migrated);
+        return migrated;
     }
 
     private void ValidateHint(TripoPanelRecoveryHint hint)
@@ -758,9 +862,6 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                 "The recovery hint contains invalid timestamps.");
         }
 
-        _ = CanonicalizeUuid(
-            hint.DocumentSessionId,
-            nameof(hint.DocumentSessionId));
         if (hint.Generation is null &&
             hint.Conversion is null &&
             hint.Import is null)
@@ -787,6 +888,9 @@ public sealed class TripoPanelRecoveryStore : IDisposable
             _ = ValidateTaskId(
                 hint.Import.ConversionTaskId,
                 nameof(hint.Import.ConversionTaskId));
+            _ = CanonicalizeUuid(
+                hint.Import.DocumentSessionId,
+                nameof(hint.Import.DocumentSessionId));
             _ = ValidateName(hint.Import.Name);
             _ = ValidateImportMode(hint.Import.ImportMode);
             if (!hint.Import.DispatchAttempted)

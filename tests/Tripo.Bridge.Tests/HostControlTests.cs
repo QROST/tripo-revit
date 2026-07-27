@@ -131,7 +131,7 @@ public sealed class HostControlTests
     }
 
     [Fact]
-    public async Task LegacyV2PaidRequestIsRejectedBeforeDispatch()
+    public async Task LegacyV3PaidRequestIsRejectedBeforeDispatch()
     {
         using TemporaryDataRoot dataRoot = new();
         RecordingDispatcher dispatcher = new();
@@ -140,7 +140,7 @@ public sealed class HostControlTests
         await server.StartAsync();
         Tripo.Bridge.HostControlSessionDescriptor descriptor = server.Descriptor;
         Tripo.Bridge.HostControlRequest request = new(
-            "2",
+            "3",
             Tripo.Bridge.HostControlConstants.Channel,
             Guid.NewGuid().ToString("D"),
             descriptor.SessionToken,
@@ -151,14 +151,13 @@ public sealed class HostControlTests
                     10_000,
                     false,
                     Guid.NewGuid().ToString("D"),
-                    Guid.NewGuid().ToString("D"),
                     true,
                     true)));
 
         Tripo.Bridge.HostControlResponse response =
             await SendRawAsync(descriptor, request);
 
-        Assert.Equal("3", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("4", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.False(response.Ok);
         Assert.Equal("unsupported_protocol", response.Error?.Code);
         Assert.Equal(0, dispatcher.CallCount);
@@ -248,7 +247,7 @@ public sealed class HostControlTests
     }
 
     [Fact]
-    public async Task DiscoveryRejectsLegacyV2Descriptor()
+    public async Task DiscoveryRejectsLegacyV3Descriptor()
     {
         using TemporaryDataRoot dataRoot = new();
         await using Tripo.Bridge.NamedPipeHostControlServer server =
@@ -260,7 +259,7 @@ public sealed class HostControlTests
         Tripo.Bridge.HostControlSessionDescriptor legacy =
             server.Descriptor with
             {
-                ProtocolVersion = "2",
+                ProtocolVersion = "3",
             };
         File.WriteAllText(
             path,
@@ -274,7 +273,7 @@ public sealed class HostControlTests
                 "rhino",
                 Environment.ProcessId));
 
-        Assert.Equal("3", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("4", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.Equal("sidecar_unavailable", exception.Code);
     }
 
@@ -337,6 +336,49 @@ public sealed class HostControlTests
 
         Assert.DoesNotContain(secret, rendered, StringComparison.Ordinal);
         Assert.Contains("[REDACTED]", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PaidAndStagingPayloadsOmitDocumentSessionIdentity()
+    {
+        string operationId = Guid.NewGuid().ToString("D");
+        object[] requests =
+        [
+            new Tripo.Bridge.HostControlCreateTextTaskRequest(
+                "a chair",
+                10_000,
+                false,
+                operationId,
+                true),
+            new Tripo.Bridge.HostControlCreateImageTaskRequest(
+                new Tripo.Bridge.StagedImageTransfer(
+                    Guid.NewGuid().ToString("D"),
+                    new string('a', 64),
+                    10,
+                    "image/png"),
+                10_000,
+                false,
+                operationId,
+                true),
+            new Tripo.Bridge.HostControlCreateObjConversionRequest(
+                "task_source123",
+                10_000,
+                false,
+                operationId,
+                true),
+            new Tripo.Bridge.HostControlStageObjTaskRequest(
+                "task_conversion123",
+                false),
+        ];
+
+        string serialized = System.Text.Json.JsonSerializer.Serialize(
+            requests,
+            Tripo.Bridge.BridgeJson.Options);
+
+        Assert.DoesNotContain(
+            "documentSessionId",
+            serialized,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

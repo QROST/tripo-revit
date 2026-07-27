@@ -12,30 +12,25 @@ public interface ITripoApiClient
     string ResolveEffectiveModel();
 
     string GetTextTaskOperationFingerprint(
-        TextGenerationOptions options,
-        string documentSessionId);
+        TextGenerationOptions options);
 
     string GetImageTaskOperationFingerprint(
-        ImageGenerationOptions options,
-        string documentSessionId) =>
+        ImageGenerationOptions options) =>
         throw new NotSupportedException(
             "This API client does not support image generation.");
 
     string GetObjConversionOperationFingerprint(
         string taskId,
         int faceLimit,
-        bool withMaterials,
-        string documentSessionId);
+        bool withMaterials);
 
     Task<string> CreateTextModelAsync(
         TextGenerationOptions options,
-        string documentSessionId,
         ITaskCreationCheckpoint checkpoint,
         CancellationToken cancellationToken);
 
     Task<string> CreateImageModelAsync(
         ImageGenerationOptions options,
-        string documentSessionId,
         IImageTaskCreationCheckpoint checkpoint,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException(
@@ -45,7 +40,6 @@ public interface ITripoApiClient
         string taskId,
         int faceLimit,
         bool withMaterials,
-        string documentSessionId,
         ITaskCreationCheckpoint checkpoint,
         CancellationToken cancellationToken);
 
@@ -130,26 +124,22 @@ public sealed partial class TripoV3Client : ITripoApiClient
     }
 
     public string GetTextTaskOperationFingerprint(
-        TextGenerationOptions options,
-        string documentSessionId)
+        TextGenerationOptions options)
     {
         TextGenerationRequest payload = CreateTextGenerationRequest(options);
         return ComputePaidOperationFingerprint(
             "generation/text-to-model",
-            documentSessionId,
             SerializeRequest(payload),
             GetValidatedApiKey());
     }
 
     public string GetImageTaskOperationFingerprint(
-        ImageGenerationOptions options,
-        string documentSessionId)
+        ImageGenerationOptions options)
     {
         ImageOperationIdentity identity =
             CreateImageOperationIdentity(options);
         return ComputePaidOperationFingerprint(
             "files+generation/image-to-model",
-            documentSessionId,
             SerializeRequest(identity),
             GetValidatedApiKey());
     }
@@ -157,21 +147,18 @@ public sealed partial class TripoV3Client : ITripoApiClient
     public string GetObjConversionOperationFingerprint(
         string taskId,
         int faceLimit,
-        bool withMaterials,
-        string documentSessionId)
+        bool withMaterials)
     {
         ConvertModelRequest payload =
             CreateObjConversionRequest(taskId, faceLimit, withMaterials);
         return ComputePaidOperationFingerprint(
             "models/convert",
-            documentSessionId,
             SerializeRequest(payload),
             GetValidatedApiKey());
     }
 
     public Task<string> CreateTextModelAsync(
         TextGenerationOptions options,
-        string documentSessionId,
         ITaskCreationCheckpoint checkpoint,
         CancellationToken cancellationToken)
     {
@@ -181,7 +168,6 @@ public sealed partial class TripoV3Client : ITripoApiClient
         string apiKey = EnsureCheckpointMatchesRequest(
             checkpoint,
             "generation/text-to-model",
-            documentSessionId,
             payloadBytes);
         return CreateTaskAsync(
             "generation/text-to-model",
@@ -193,7 +179,6 @@ public sealed partial class TripoV3Client : ITripoApiClient
 
     public async Task<string> CreateImageModelAsync(
         ImageGenerationOptions options,
-        string documentSessionId,
         IImageTaskCreationCheckpoint checkpoint,
         CancellationToken cancellationToken)
     {
@@ -203,13 +188,11 @@ public sealed partial class TripoV3Client : ITripoApiClient
         byte[] identityBytes = SerializeRequest(identity);
         string apiKey = EnsureCheckpointMatchesLogicalImageRequest(
             checkpoint,
-            documentSessionId,
             identityBytes);
 
         string fileToken = checkpoint.FileToken ??
             await UploadImageAsync(
                     options,
-                    documentSessionId,
                     checkpoint,
                     apiKey,
                     cancellationToken)
@@ -220,7 +203,6 @@ public sealed partial class TripoV3Client : ITripoApiClient
         string expectedGenerationFingerprint =
             ComputePaidOperationFingerprint(
                 ImageGenerationPath,
-                documentSessionId,
                 payloadBytes,
                 apiKey);
         if (!string.Equals(
@@ -245,7 +227,6 @@ public sealed partial class TripoV3Client : ITripoApiClient
         string taskId,
         int faceLimit,
         bool withMaterials,
-        string documentSessionId,
         ITaskCreationCheckpoint checkpoint,
         CancellationToken cancellationToken)
     {
@@ -256,7 +237,6 @@ public sealed partial class TripoV3Client : ITripoApiClient
         string apiKey = EnsureCheckpointMatchesRequest(
             checkpoint,
             "models/convert",
-            documentSessionId,
             payloadBytes);
         return CreateTaskAsync(
             "models/convert",
@@ -363,13 +343,11 @@ public sealed partial class TripoV3Client : ITripoApiClient
     private string EnsureCheckpointMatchesRequest(
         ITaskCreationCheckpoint checkpoint,
         string relativePath,
-        string documentSessionId,
         byte[] payload)
     {
         string apiKey = GetValidatedApiKey();
         string expected = ComputePaidOperationFingerprint(
             relativePath,
-            documentSessionId,
             payload,
             apiKey);
         if (!string.Equals(
@@ -379,7 +357,7 @@ public sealed partial class TripoV3Client : ITripoApiClient
         {
             throw new TripoApiException(
                 "The paid-operation checkpoint does not match the API credential, " +
-                "endpoint, document session, or exact request payload.");
+                "endpoint, or exact request payload.");
         }
 
         return apiKey;
@@ -387,13 +365,11 @@ public sealed partial class TripoV3Client : ITripoApiClient
 
     private string EnsureCheckpointMatchesLogicalImageRequest(
         IImageTaskCreationCheckpoint checkpoint,
-        string documentSessionId,
         byte[] identity)
     {
         string apiKey = GetValidatedApiKey();
         string expected = ComputePaidOperationFingerprint(
             "files+generation/image-to-model",
-            documentSessionId,
             identity,
             apiKey);
         if (!string.Equals(
@@ -403,7 +379,7 @@ public sealed partial class TripoV3Client : ITripoApiClient
         {
             throw new TripoApiException(
                 "The image operation checkpoint does not match the API " +
-                "credential, document session, staged image content, or exact " +
+                "credential, staged image content, or exact " +
                 "generation options.");
         }
 
@@ -412,31 +388,18 @@ public sealed partial class TripoV3Client : ITripoApiClient
 
     private static string ComputePaidOperationFingerprint(
         string relativePath,
-        string documentSessionId,
         byte[] payload,
         string apiKey)
     {
-        if (!Guid.TryParseExact(documentSessionId, "D", out Guid documentId) ||
-            !string.Equals(
-                documentId.ToString("D"),
-                documentSessionId,
-                StringComparison.Ordinal))
-        {
-            throw new ArgumentException(
-                "documentSessionId must be a canonical D-format UUID.",
-                nameof(documentSessionId));
-        }
-
         using MemoryStream fingerprintInput = new();
         using (BinaryWriter writer = new(
                    fingerprintInput,
                    System.Text.Encoding.UTF8,
                    leaveOpen: true))
         {
-            writer.Write("tripo-paid-operation-request-v1");
+            writer.Write("tripo-paid-operation-request-v2");
             writer.Write(BaseUri.AbsoluteUri);
             writer.Write(relativePath);
-            writer.Write(documentSessionId);
             writer.Write(payload.Length);
             writer.Write(payload);
         }
@@ -483,7 +446,6 @@ public sealed partial class TripoV3Client : ITripoApiClient
 
     private async Task<string> UploadImageAsync(
         ImageGenerationOptions options,
-        string documentSessionId,
         IImageTaskCreationCheckpoint checkpoint,
         string apiKey,
         CancellationToken cancellationToken)
@@ -535,7 +497,6 @@ public sealed partial class TripoV3Client : ITripoApiClient
             string generationFingerprint =
                 ComputePaidOperationFingerprint(
                     ImageGenerationPath,
-                    documentSessionId,
                     SerializeRequest(generationRequest),
                     apiKey);
             try

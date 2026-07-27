@@ -78,42 +78,35 @@ internal sealed record PaidOperationDescriptor(
     string OperationId,
     string Kind,
     string RequestFingerprint,
-    string DocumentSessionId,
     string? SourceTaskId,
     Tripo.Bridge.StagedImageTransfer? Image)
 {
     public static PaidOperationDescriptor ForTextTask(
         string operationId,
-        string documentSessionId,
         string requestFingerprint)
     {
         string canonicalOperationId = CanonicalizeOperationId(operationId);
-        ValidateDocumentSessionId(documentSessionId);
         ValidateRequestFingerprint(requestFingerprint);
         return new PaidOperationDescriptor(
             canonicalOperationId,
             PaidOperationKinds.TextTaskCreation,
             requestFingerprint,
-            documentSessionId,
             SourceTaskId: null,
             Image: null);
     }
 
     public static PaidOperationDescriptor ForImageTask(
         string operationId,
-        string documentSessionId,
         string requestFingerprint,
         Tripo.Bridge.StagedImageTransfer image)
     {
         string canonicalOperationId = CanonicalizeOperationId(operationId);
-        ValidateDocumentSessionId(documentSessionId);
         ValidateRequestFingerprint(requestFingerprint);
         Tripo.Bridge.ImageTransferStore.ValidateDescriptor(image);
         return new PaidOperationDescriptor(
             canonicalOperationId,
             PaidOperationKinds.ImageTaskCreation,
             requestFingerprint,
-            documentSessionId,
             SourceTaskId: null,
             Image: image);
     }
@@ -121,18 +114,15 @@ internal sealed record PaidOperationDescriptor(
     public static PaidOperationDescriptor ForObjConversion(
         string operationId,
         string sourceTaskId,
-        string documentSessionId,
         string requestFingerprint)
     {
         string canonicalOperationId = CanonicalizeOperationId(operationId);
         TripoV3Client.ValidateTaskId(sourceTaskId);
-        ValidateDocumentSessionId(documentSessionId);
         ValidateRequestFingerprint(requestFingerprint);
         return new PaidOperationDescriptor(
             canonicalOperationId,
             PaidOperationKinds.ObjConversionCreation,
             requestFingerprint,
-            documentSessionId,
             sourceTaskId,
             Image: null);
     }
@@ -164,19 +154,6 @@ internal sealed record PaidOperationDescriptor(
         }
     }
 
-    private static void ValidateDocumentSessionId(string documentSessionId)
-    {
-        if (!Guid.TryParseExact(documentSessionId, "D", out Guid parsed) ||
-            !string.Equals(
-                parsed.ToString("D"),
-                documentSessionId,
-                StringComparison.Ordinal))
-        {
-            throw new ArgumentException(
-                "documentSessionId must be a canonical D-format UUID.",
-                nameof(documentSessionId));
-        }
-    }
 }
 
 internal interface IPaidOperationJournal
@@ -231,7 +208,7 @@ internal abstract class PaidOperationLease :
 
 internal sealed class PaidOperationJournal : IPaidOperationJournal
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private const int MaximumJournalBytes = 1024 * 1024;
     private const int MaximumRecordBytes = 64 * 1024;
     private const string OperationsDirectoryName = "operations";
@@ -563,8 +540,16 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
                     "The local paid-operation journal contains an oversized record.");
             }
 
-            PaidOperationJournalEntry? entry = TryParseEntry(
-                bytes.AsSpan(recordStart, recordLength));
+            ReadOnlySpan<byte> record =
+                bytes.AsSpan(recordStart, recordLength);
+            if (TryReadSchemaVersion(record, out int schemaVersion) &&
+                schemaVersion != SchemaVersion)
+            {
+                throw new TripoWorkflowException(
+                    "The local paid-operation journal uses an unsupported schema.");
+            }
+
+            PaidOperationJournalEntry? entry = TryParseEntry(record);
             if (entry is null)
             {
                 if (!hasNewline)
@@ -621,6 +606,26 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
         }
     }
 
+    private static bool TryReadSchemaVersion(
+        ReadOnlySpan<byte> bytes,
+        out int schemaVersion)
+    {
+        schemaVersion = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(bytes.ToArray());
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty(
+                    "schemaVersion",
+                    out JsonElement version) &&
+                version.TryGetInt32(out schemaVersion);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static void ValidateEntry(
         PaidOperationJournalEntry entry,
         long expectedRevision,
@@ -632,15 +637,6 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
                 "The local paid-operation journal uses an unsupported schema.");
         }
 
-        bool documentSessionValid =
-            Guid.TryParseExact(
-                entry.DocumentSessionId,
-                "D",
-                out Guid documentSessionId) &&
-            string.Equals(
-                documentSessionId.ToString("D"),
-                entry.DocumentSessionId,
-                StringComparison.Ordinal);
         bool fingerprintValid = IsValidFingerprint(entry.RequestFingerprint);
         bool imageIdentityValid =
             entry.ImageSha256 is not null &&
@@ -672,7 +668,6 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
                 entry.OperationId,
                 StringComparison.Ordinal) ||
             !fingerprintValid ||
-            !documentSessionValid ||
             entry.CreatedTaskId?.Length > 256 ||
             entry.SourceTaskId?.Length > 256 ||
             entry.FileToken?.Length > 256 ||
@@ -706,10 +701,6 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
             !string.Equals(
                 prior.RequestFingerprint,
                 entry.RequestFingerprint,
-                StringComparison.Ordinal) ||
-            !string.Equals(
-                prior.DocumentSessionId,
-                entry.DocumentSessionId,
                 StringComparison.Ordinal) ||
             !string.Equals(prior.SourceTaskId, entry.SourceTaskId, StringComparison.Ordinal) ||
             !string.Equals(
@@ -867,10 +858,6 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
                 descriptor.RequestFingerprint,
                 StringComparison.Ordinal) ||
             !string.Equals(
-                entry.DocumentSessionId,
-                descriptor.DocumentSessionId,
-                StringComparison.Ordinal) ||
-            !string.Equals(
                 entry.SourceTaskId,
                 descriptor.SourceTaskId,
                 StringComparison.Ordinal) ||
@@ -901,7 +888,6 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
             descriptor.OperationId,
             descriptor.Kind,
             descriptor.RequestFingerprint,
-            descriptor.DocumentSessionId,
             state,
             descriptor.SourceTaskId,
             createdTaskId,
@@ -1466,7 +1452,6 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
         string OperationId,
         string Kind,
         string RequestFingerprint,
-        string DocumentSessionId,
         string State,
         string? SourceTaskId,
         string? CreatedTaskId,

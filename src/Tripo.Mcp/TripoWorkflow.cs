@@ -146,7 +146,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string prompt,
         int faceLimit,
         bool withMaterials,
-        string documentSessionId,
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
@@ -155,7 +154,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         EnsureCostConfirmed(confirmExternalCost);
         TripoV3Client.ValidatePrompt(prompt);
         TripoV3Client.ValidateFaceLimit(faceLimit);
-        ValidateDocumentSessionId(documentSessionId);
         string canonicalOperationId =
             PaidOperationDescriptor.CanonicalizeOperationId(operationId);
         using IDisposable executionLease = _executionGate.Acquire();
@@ -167,8 +165,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
         {
             requestFingerprint =
                 _apiClient.GetTextTaskOperationFingerprint(
-                    generationOptions,
-                    documentSessionId);
+                    generationOptions);
         }
         catch (TripoApiException exception)
         {
@@ -177,7 +174,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
 
         PaidOperationDescriptor descriptor = PaidOperationDescriptor.ForTextTask(
             canonicalOperationId,
-            documentSessionId,
             requestFingerprint);
         await using PaidOperationLease operation =
             await _operationJournal.AcquireAsync(
@@ -194,15 +190,12 @@ public sealed class TripoWorkflow : ITripoWorkflow
         }
 
         EnsureCreationCanDispatch(operation.Status);
-        await EnsureDocumentSessionAsync(documentSessionId, cancellationToken)
-            .ConfigureAwait(false);
 
         string taskId;
         try
         {
             taskId = await _apiClient.CreateTextModelAsync(
                     generationOptions,
-                    documentSessionId,
                     operation,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -227,7 +220,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         Tripo.Bridge.StagedImageTransfer image,
         int faceLimit,
         bool withMaterials,
-        string documentSessionId,
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
@@ -236,7 +228,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         EnsureCostConfirmed(confirmExternalCost);
         Tripo.Bridge.ImageTransferStore.ValidateDescriptor(image);
         TripoV3Client.ValidateFaceLimit(faceLimit);
-        ValidateDocumentSessionId(documentSessionId);
         string canonicalOperationId =
             PaidOperationDescriptor.CanonicalizeOperationId(operationId);
         using IDisposable executionLease = _executionGate.Acquire();
@@ -248,8 +239,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
         {
             requestFingerprint =
                 _apiClient.GetImageTaskOperationFingerprint(
-                    generationOptions,
-                    documentSessionId);
+                    generationOptions);
         }
         catch (TripoApiException exception)
         {
@@ -259,7 +249,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         PaidOperationDescriptor descriptor =
             PaidOperationDescriptor.ForImageTask(
                 canonicalOperationId,
-                documentSessionId,
                 requestFingerprint,
                 image);
         await using PaidOperationLease operation =
@@ -278,19 +267,13 @@ public sealed class TripoWorkflow : ITripoWorkflow
         }
 
         EnsureCreationCanDispatch(operation.Status);
-        await EnsureDocumentSessionAsync(documentSessionId, cancellationToken)
-            .ConfigureAwait(false);
 
-        DocumentCheckingImageCheckpoint checkpoint = new(
-            operation,
-            token => EnsureDocumentSessionAsync(documentSessionId, token));
         string taskId;
         try
         {
             taskId = await _apiClient.CreateImageModelAsync(
                     generationOptions,
-                    documentSessionId,
-                    checkpoint,
+                    operation,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -315,7 +298,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string sourceTaskId,
         int faceLimit,
         bool withMaterials,
-        string documentSessionId,
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
@@ -324,7 +306,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         EnsureCostConfirmed(confirmExternalCost);
         TripoV3Client.ValidateTaskId(sourceTaskId);
         TripoV3Client.ValidateFaceLimit(faceLimit);
-        ValidateDocumentSessionId(documentSessionId);
         string canonicalOperationId =
             PaidOperationDescriptor.CanonicalizeOperationId(operationId);
         using IDisposable executionLease = _executionGate.Acquire();
@@ -335,8 +316,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
                 _apiClient.GetObjConversionOperationFingerprint(
                     sourceTaskId,
                     faceLimit,
-                    withMaterials,
-                    documentSessionId);
+                    withMaterials);
         }
         catch (TripoApiException exception)
         {
@@ -346,7 +326,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         PaidOperationDescriptor descriptor = PaidOperationDescriptor.ForObjConversion(
             canonicalOperationId,
             sourceTaskId,
-            documentSessionId,
             requestFingerprint);
         await using PaidOperationLease operation =
             await _operationJournal.AcquireAsync(
@@ -364,8 +343,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
         }
 
         EnsureCreationCanDispatch(operation.Status);
-        await EnsureDocumentSessionAsync(documentSessionId, cancellationToken)
-            .ConfigureAwait(false);
 
         string conversionTaskId;
         try
@@ -377,13 +354,10 @@ public sealed class TripoWorkflow : ITripoWorkflow
             EnsureSuccessfulTask(sourceTask);
             EnsureGenerationTask(sourceTask);
 
-            await EnsureDocumentSessionAsync(documentSessionId, cancellationToken)
-                .ConfigureAwait(false);
             conversionTaskId = await _apiClient.CreateObjConversionAsync(
                     sourceTaskId,
                     faceLimit,
                     withMaterials,
-                    documentSessionId,
                     operation,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -464,14 +438,10 @@ public sealed class TripoWorkflow : ITripoWorkflow
 
     public async Task<ObjTaskStageReceipt> StageObjTaskAsync(
         string conversionTaskId,
-        string documentSessionId,
         bool includeMaterials,
         CancellationToken cancellationToken)
     {
         TripoV3Client.ValidateTaskId(conversionTaskId);
-        ValidateDocumentSessionId(documentSessionId);
-        await EnsureDocumentSessionAsync(documentSessionId, cancellationToken)
-            .ConfigureAwait(false);
         (TripoTaskSnapshot conversionTask, Tripo.Bridge.StagedBundle bundle) =
             await StageSuccessfulObjTaskAsync(
                     conversionTaskId,
@@ -484,8 +454,6 @@ public sealed class TripoWorkflow : ITripoWorkflow
                 "no MTL material library. Retry conversion with withMaterials enabled.");
         }
 
-        await EnsureDocumentSessionAsync(documentSessionId, cancellationToken)
-            .ConfigureAwait(false);
         Tripo.Bridge.StagedMeshLoadRequest mesh = new(
             bundle.BundleId,
             bundle.ObjEntry,
@@ -832,72 +800,5 @@ public sealed class TripoWorkflow : ITripoWorkflow
             throw new TripoWorkflowException(
                 $"Tripo task {task.TaskId} is not a supported OBJ conversion task.");
         }
-    }
-
-    private sealed class DocumentCheckingImageCheckpoint :
-        IImageTaskCreationCheckpoint
-    {
-        private readonly IImageTaskCreationCheckpoint _inner;
-        private readonly Func<CancellationToken, Task> _ensureDocumentSession;
-
-        public DocumentCheckingImageCheckpoint(
-            IImageTaskCreationCheckpoint inner,
-            Func<CancellationToken, Task> ensureDocumentSession)
-        {
-            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            _ensureDocumentSession =
-                ensureDocumentSession ??
-                throw new ArgumentNullException(nameof(ensureDocumentSession));
-        }
-
-        public string RequestFingerprint => _inner.RequestFingerprint;
-
-        public string? FileToken => _inner.FileToken;
-
-        public string? GenerationRequestFingerprint =>
-            _inner.GenerationRequestFingerprint;
-
-        public Task BeforeSendAsync(CancellationToken cancellationToken) =>
-            _inner.BeforeSendAsync(cancellationToken);
-
-        public Task TaskIdReceivedAsync(string taskId) =>
-            _inner.TaskIdReceivedAsync(taskId);
-
-        public Task RequestRejectedAsync(string code, string message) =>
-            _inner.RequestRejectedAsync(code, message);
-
-        public Task OutcomeUnknownAsync(string code, string message) =>
-            _inner.OutcomeUnknownAsync(code, message);
-
-        public async Task BeforeImageUploadAsync(
-            CancellationToken cancellationToken)
-        {
-            await _ensureDocumentSession(cancellationToken)
-                .ConfigureAwait(false);
-            await _inner.BeforeImageUploadAsync(cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        public Task ImageFileTokenReceivedAsync(
-            string fileToken,
-            string generationRequestFingerprint) =>
-            _inner.ImageFileTokenReceivedAsync(
-                fileToken,
-                generationRequestFingerprint);
-
-        public async Task BeforeImageGenerationAsync(
-            CancellationToken cancellationToken)
-        {
-            await _ensureDocumentSession(cancellationToken)
-                .ConfigureAwait(false);
-            await _inner.BeforeImageGenerationAsync(cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        public Task ImageOutcomeUnknownAsync(
-            string stage,
-            string code,
-            string message) =>
-            _inner.ImageOutcomeUnknownAsync(stage, code, message);
     }
 }

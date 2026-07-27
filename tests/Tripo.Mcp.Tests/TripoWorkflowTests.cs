@@ -31,7 +31,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 10_000,
                 withMaterials: false,
                 Guid.NewGuid().ToString("D"),
-                Guid.NewGuid().ToString("D"),
                 confirmExternalCost: false,
                 CancellationToken.None));
 
@@ -60,7 +59,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: false,
-                Guid.NewGuid().ToString("D"),
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -82,14 +80,12 @@ public sealed class TripoWorkflowTests : IDisposable
     [Fact]
     public async Task CredentialLossAfterJournalCreationIsDurablyRejected()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new()
         {
             FailTextCredentialBeforeSend = true,
         };
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -101,7 +97,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -113,20 +108,18 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.Equal("request_rejected", status.State);
         Assert.False(status.MayHaveCreatedRemoteTask);
         Assert.Equal(0, api.CreateTextCalls);
-        Assert.Equal(1, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task ImageCredentialLossBeforeUploadIsDurablyRejected()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new()
         {
             FailImageCredentialBeforeSend = true,
         };
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -138,7 +131,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 ImageTransfer(),
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -152,16 +144,14 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.False(status.MayHaveCreatedRemoteTask);
         Assert.Equal(0, api.CreateImageCalls);
         Assert.Equal(0, api.ImageUploadCalls);
-        Assert.Equal(1, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task TextCreationReturnsPaidTaskIdWithoutPolling()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         string operationId = Guid.NewGuid().ToString("D");
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
@@ -173,7 +163,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None);
@@ -183,12 +172,12 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.Equal(Tripo.Mcp.TripoV3Client.DefaultModel, receipt.Model);
         Assert.Equal(1, api.CreateTextCalls);
         Assert.Equal(0, api.GetTaskCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task PaidTextWorkflowHoldsTheSidecarExecutionGateUntilDurable()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         TrackingExecutionGate executionGate = new();
         FakeApiClient api = new()
         {
@@ -196,7 +185,6 @@ public sealed class TripoWorkflowTests : IDisposable
             OnTextTaskIdDurable = () => Assert.True(executionGate.IsHeld),
         };
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -207,7 +195,6 @@ public sealed class TripoWorkflowTests : IDisposable
             "a chair",
             10_000,
             withMaterials: false,
-            requestedSession,
             Guid.NewGuid().ToString("D"),
             confirmExternalCost: true,
             CancellationToken.None);
@@ -219,11 +206,9 @@ public sealed class TripoWorkflowTests : IDisposable
     [Fact]
     public async Task LostTextCreationResponseCanReplayTheDurableTaskId()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -234,7 +219,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None);
@@ -243,28 +227,24 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None);
 
         Assert.Equal(first, replay);
         Assert.Equal(1, api.CreateTextCalls);
-        Assert.Equal(1, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task PersistedImageFileTokenResumesWithoutReupload()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
-        FakeApiClient api = new();
+        FakeApiClient api = new()
+        {
+            FailBeforeImageGenerationOnce = true,
+        };
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
-        host.Contexts.Enqueue(Context(requestedSession));
-        host.Contexts.Enqueue(Context(Guid.NewGuid().ToString("D")));
-        host.Contexts.Enqueue(Context(requestedSession));
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -276,7 +256,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 image,
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -290,7 +269,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 image,
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None);
@@ -304,29 +282,22 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.Equal(2, api.CreateImageCalls);
         Assert.Equal(1, api.ImageUploadCalls);
         Assert.Equal(1, api.ImageGenerationCalls);
-        Assert.Equal(5, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Theory]
-    [InlineData("upload", false, 2)]
-    [InlineData("generation", true, 3)]
+    [InlineData("upload", false)]
+    [InlineData("generation", true)]
     public async Task ImageOutcomeUnknownCannotBeAutomaticallyResent(
         string failureStage,
-        bool mayHaveCreatedRemoteTask,
-        int expectedContextCalls)
+        bool mayHaveCreatedRemoteTask)
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new()
         {
             FailImageStage = failureStage,
         };
         FakeHostConnection host = new();
-        for (int index = 0; index < expectedContextCalls; index++)
-        {
-            host.Contexts.Enqueue(Context(requestedSession));
-        }
-
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -338,7 +309,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 image,
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -351,7 +321,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 image,
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -367,17 +336,15 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.Equal(
             failureStage == "generation" ? 1 : 0,
             api.ImageGenerationCalls);
-        Assert.Equal(expectedContextCalls, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task ReusingPaidOperationWithDifferentArgumentsFailsClosed()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -387,7 +354,6 @@ public sealed class TripoWorkflowTests : IDisposable
             "a chair",
             10_000,
             withMaterials: false,
-            requestedSession,
             operationId,
             confirmExternalCost: true,
             CancellationToken.None);
@@ -396,23 +362,20 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a different chair",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
 
         Assert.Equal(1, api.CreateTextCalls);
-        Assert.Equal(1, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task FlippingMaterialFlagOnPaidReplayFailsClosed()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -422,7 +385,6 @@ public sealed class TripoWorkflowTests : IDisposable
             "a chair",
             10_000,
             withMaterials: false,
-            requestedSession,
             operationId,
             confirmExternalCost: true,
             CancellationToken.None);
@@ -431,7 +393,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: true,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -442,14 +403,12 @@ public sealed class TripoWorkflowTests : IDisposable
     [Fact]
     public async Task AmbiguousPaidPostOutcomeCannotBeAutomaticallyResent()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new()
         {
             FailTextAfterDispatch = true,
         };
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -460,7 +419,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -473,7 +431,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -482,20 +439,18 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.True(status.MayHaveCreatedRemoteTask);
         Assert.False(status.CanResumeCreation);
         Assert.Equal(1, api.CreateTextCalls);
-        Assert.Equal(1, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task PaidOperationIsBoundToTheApiCredentialScope()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient firstApi = new()
         {
             OperationScopeFingerprint = new string('a', 64),
         };
         FakeHostConnection firstHost = new();
-        firstHost.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow firstWorkflow = CreateWorkflow(
             firstApi,
             new FakeArtifactStager(),
@@ -504,7 +459,6 @@ public sealed class TripoWorkflowTests : IDisposable
             "a chair",
             10_000,
             withMaterials: false,
-            requestedSession,
             operationId,
             confirmExternalCost: true,
             CancellationToken.None);
@@ -524,7 +478,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "a chair",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -533,34 +486,32 @@ public sealed class TripoWorkflowTests : IDisposable
     }
 
     [Fact]
-    public async Task DocumentSwitchBeforeConversionPreventsPaidPost()
+    public async Task ConversionCreationDoesNotReadHostContext()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         api.TaskSnapshots.Enqueue(Success(
             "task_source123",
             "text_to_model",
             modelUrl: null));
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
-        host.Contexts.Enqueue(Context(Guid.NewGuid().ToString("D")));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
             host);
 
-        await Assert.ThrowsAsync<Tripo.Mcp.TripoWorkflowException>(
-            () => workflow.CreateObjConversionAsync(
+        Tripo.Mcp.ObjConversionCreationReceipt receipt =
+            await workflow.CreateObjConversionAsync(
                 "task_source123",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 Guid.NewGuid().ToString("D"),
                 confirmExternalCost: true,
-                CancellationToken.None));
+                CancellationToken.None);
 
+        Assert.Equal("task_conversion123", receipt.ConversionTaskId);
         Assert.Equal(1, api.GetTaskCalls);
-        Assert.Equal(0, api.CreateConversionCalls);
+        Assert.Equal(1, api.CreateConversionCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Theory]
@@ -569,7 +520,6 @@ public sealed class TripoWorkflowTests : IDisposable
     public async Task ConversionSourceReadRejectionCreatesNoPaidPost(
         HttpStatusCode statusCode)
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new()
         {
@@ -578,7 +528,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 statusCode),
         };
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -590,7 +539,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "task_source123",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None));
@@ -603,20 +551,18 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.False(status.MayHaveCreatedRemoteTask);
         Assert.Equal(1, api.GetTaskCalls);
         Assert.Equal(0, api.CreateConversionCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task ConversionCreationReturnsPaidTaskIdWithoutPollingIt()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         api.TaskSnapshots.Enqueue(Success(
             "task_source123",
             "text_to_model",
             modelUrl: null));
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
-        host.Contexts.Enqueue(Context(requestedSession));
         string operationId = Guid.NewGuid().ToString("D");
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
@@ -628,7 +574,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "task_source123",
                 10_000,
                 withMaterials: true,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None);
@@ -640,12 +585,12 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.Equal(1, api.GetTaskCalls);
         Assert.Equal(1, api.CreateConversionCalls);
         Assert.True(api.LastConversionWithMaterials);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
     public async Task LostConversionResponseCanReplayTheDurableTaskId()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         api.TaskSnapshots.Enqueue(Success(
@@ -653,8 +598,6 @@ public sealed class TripoWorkflowTests : IDisposable
             "text_to_model",
             modelUrl: null));
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -665,7 +608,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "task_source123",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None);
@@ -674,7 +616,6 @@ public sealed class TripoWorkflowTests : IDisposable
                 "task_source123",
                 10_000,
                 withMaterials: false,
-                requestedSession,
                 operationId,
                 confirmExternalCost: true,
                 CancellationToken.None);
@@ -682,7 +623,7 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.Equal(first, replay);
         Assert.Equal(1, api.GetTaskCalls);
         Assert.Equal(1, api.CreateConversionCalls);
-        Assert.Equal(2, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
@@ -755,7 +696,6 @@ public sealed class TripoWorkflowTests : IDisposable
     [Fact]
     public async Task StageObjReturnsExactMeshDescriptorWithoutHostMutation()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         api.TaskSnapshots.Enqueue(Success(
             "task_conversion123",
@@ -763,8 +703,6 @@ public sealed class TripoWorkflowTests : IDisposable
             "https://cdn.example.test/model.obj",
             credits: 5));
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
-        host.Contexts.Enqueue(Context(requestedSession));
         FakeArtifactStager stager = new()
         {
             MtlEntry = "model.mtl",
@@ -774,7 +712,6 @@ public sealed class TripoWorkflowTests : IDisposable
         Tripo.Mcp.ObjTaskStageReceipt receipt =
             await workflow.StageObjTaskAsync(
                 "task_conversion123",
-                requestedSession,
                 includeMaterials: true,
                 CancellationToken.None);
 
@@ -789,60 +726,54 @@ public sealed class TripoWorkflowTests : IDisposable
         Assert.Equal("right", receipt.Mesh.Handedness);
         Assert.True(receipt.Mesh.ApplyMaterials);
         Assert.Equal(1, stager.CallCount);
-        Assert.Equal(2, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
         Assert.Equal(0, host.ImportCalls);
     }
 
     [Fact]
-    public async Task DocumentSwitchAfterMeshStagingWithholdsTheDescriptor()
+    public async Task StageObjDoesNotReadHostContext()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         api.TaskSnapshots.Enqueue(Success(
             "task_conversion123",
             "convert_model",
             "https://cdn.example.test/model.obj"));
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
-        host.Contexts.Enqueue(Context(Guid.NewGuid().ToString("D")));
         FakeArtifactStager stager = new();
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(api, stager, host);
 
-        await Assert.ThrowsAsync<Tripo.Mcp.TripoWorkflowException>(
-            () => workflow.StageObjTaskAsync(
+        Tripo.Mcp.ObjTaskStageReceipt receipt =
+            await workflow.StageObjTaskAsync(
                 "task_conversion123",
-                requestedSession,
                 includeMaterials: false,
-                CancellationToken.None));
+                CancellationToken.None);
 
+        Assert.Equal("task_conversion123", receipt.ConversionTaskId);
         Assert.Equal(1, stager.CallCount);
-        Assert.Equal(2, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
         Assert.Equal(0, host.ImportCalls);
     }
 
     [Fact]
     public async Task StageObjWithMaterialsRequiresAnMtlEntry()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         api.TaskSnapshots.Enqueue(Success(
             "task_conversion123",
             "convert_model",
             "https://cdn.example.test/model.obj"));
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         FakeArtifactStager stager = new();
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(api, stager, host);
 
         await Assert.ThrowsAsync<Tripo.Mcp.TripoWorkflowException>(
             () => workflow.StageObjTaskAsync(
                 "task_conversion123",
-                requestedSession,
                 includeMaterials: true,
                 CancellationToken.None));
 
         Assert.Equal(1, stager.CallCount);
-        Assert.Equal(1, host.ContextCalls);
+        Assert.Equal(0, host.ContextCalls);
         Assert.Equal(0, host.ImportCalls);
     }
 
@@ -1005,7 +936,6 @@ public sealed class TripoWorkflowTests : IDisposable
     [Fact]
     public async Task PendingTaskMustBePolledBeforeStartingNextStage()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         api.TaskSnapshots.Enqueue(new Tripo.Mcp.TripoTaskSnapshot(
             "task_source123",
@@ -1019,7 +949,6 @@ public sealed class TripoWorkflowTests : IDisposable
             null,
             null));
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -1031,13 +960,13 @@ public sealed class TripoWorkflowTests : IDisposable
                     "task_source123",
                     10_000,
                     withMaterials: false,
-                    requestedSession,
                     Guid.NewGuid().ToString("D"),
                     confirmExternalCost: true,
                     CancellationToken.None));
 
         Assert.Contains("tripo_task_status", exception.Message);
         Assert.Equal(0, api.CreateConversionCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
@@ -1098,7 +1027,6 @@ public sealed class TripoWorkflowTests : IDisposable
     [Fact]
     public async Task UnknownStatusStillBlocksObjConversionCreation()
     {
-        string requestedSession = Guid.NewGuid().ToString("D");
         FakeApiClient api = new();
         api.TaskSnapshots.Enqueue(new Tripo.Mcp.TripoTaskSnapshot(
             "task_source123",
@@ -1112,7 +1040,6 @@ public sealed class TripoWorkflowTests : IDisposable
             null,
             null));
         FakeHostConnection host = new();
-        host.Contexts.Enqueue(Context(requestedSession));
         Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
             api,
             new FakeArtifactStager(),
@@ -1124,13 +1051,13 @@ public sealed class TripoWorkflowTests : IDisposable
                     "task_source123",
                     10_000,
                     withMaterials: false,
-                    requestedSession,
                     Guid.NewGuid().ToString("D"),
                     confirmExternalCost: true,
                     CancellationToken.None));
 
         Assert.Contains("unsupported status", exception.Message);
         Assert.Equal(0, api.CreateConversionCalls);
+        Assert.Equal(0, host.ContextCalls);
     }
 
     [Fact]
@@ -1299,6 +1226,8 @@ public sealed class TripoWorkflowTests : IDisposable
 
         public string? FailImageStage { get; init; }
 
+        public bool FailBeforeImageGenerationOnce { get; set; }
+
         public bool LastConversionWithMaterials { get; private set; }
 
         public string OperationScopeFingerprint { get; init; } =
@@ -1317,8 +1246,7 @@ public sealed class TripoWorkflowTests : IDisposable
         public string ResolveEffectiveModel() => Tripo.Mcp.TripoV3Client.DefaultModel;
 
         public string GetTextTaskOperationFingerprint(
-            Tripo.Mcp.TextGenerationOptions options,
-            string documentSessionId)
+            Tripo.Mcp.TextGenerationOptions options)
         {
             OnTextFingerprint?.Invoke();
             if (FailTextCredentialFingerprint)
@@ -1328,7 +1256,7 @@ public sealed class TripoWorkflowTests : IDisposable
             }
 
             return Fingerprint(
-                $"text|{OperationScopeFingerprint}|{documentSessionId}|" +
+                $"text|{OperationScopeFingerprint}|" +
                 $"{options.Model}|{options.Prompt}|{options.FaceLimit}|" +
                 $"{options.WithMaterials}");
         }
@@ -1336,29 +1264,26 @@ public sealed class TripoWorkflowTests : IDisposable
         public string GetObjConversionOperationFingerprint(
             string taskId,
             int faceLimit,
-            bool withMaterials,
-            string documentSessionId) =>
+            bool withMaterials) =>
             Fingerprint(
-                $"convert|{OperationScopeFingerprint}|{documentSessionId}|" +
+                $"convert|{OperationScopeFingerprint}|" +
                 $"{taskId}|{faceLimit}|{withMaterials}");
 
         public string GetImageTaskOperationFingerprint(
-            Tripo.Mcp.ImageGenerationOptions options,
-            string documentSessionId) =>
+            Tripo.Mcp.ImageGenerationOptions options) =>
             Fingerprint(
-                $"image|{OperationScopeFingerprint}|{documentSessionId}|" +
+                $"image|{OperationScopeFingerprint}|" +
                 $"{options.Model}|{options.Image.Sha256}|" +
                 $"{options.Image.ByteLength}|{options.Image.MediaType}|" +
                 $"{options.FaceLimit}|{options.WithMaterials}");
 
         public async Task<string> CreateTextModelAsync(
             Tripo.Mcp.TextGenerationOptions options,
-            string documentSessionId,
             Tripo.Mcp.ITaskCreationCheckpoint checkpoint,
             CancellationToken cancellationToken)
         {
             Assert.Equal(
-                GetTextTaskOperationFingerprint(options, documentSessionId),
+                GetTextTaskOperationFingerprint(options),
                 checkpoint.RequestFingerprint);
             if (FailTextCredentialBeforeSend)
             {
@@ -1386,7 +1311,6 @@ public sealed class TripoWorkflowTests : IDisposable
             string taskId,
             int faceLimit,
             bool withMaterials,
-            string documentSessionId,
             Tripo.Mcp.ITaskCreationCheckpoint checkpoint,
             CancellationToken cancellationToken)
         {
@@ -1394,8 +1318,7 @@ public sealed class TripoWorkflowTests : IDisposable
                 GetObjConversionOperationFingerprint(
                     taskId,
                     faceLimit,
-                    withMaterials,
-                    documentSessionId),
+                    withMaterials),
                 checkpoint.RequestFingerprint);
             await checkpoint.BeforeSendAsync(cancellationToken);
             CreateConversionCalls++;
@@ -1406,14 +1329,12 @@ public sealed class TripoWorkflowTests : IDisposable
 
         public async Task<string> CreateImageModelAsync(
             Tripo.Mcp.ImageGenerationOptions options,
-            string documentSessionId,
             Tripo.Mcp.IImageTaskCreationCheckpoint checkpoint,
             CancellationToken cancellationToken)
         {
             Assert.Equal(
                 GetImageTaskOperationFingerprint(
-                    options,
-                    documentSessionId),
+                    options),
                 checkpoint.RequestFingerprint);
             if (FailImageCredentialBeforeSend)
             {
@@ -1439,6 +1360,13 @@ public sealed class TripoWorkflowTests : IDisposable
                 await checkpoint.ImageFileTokenReceivedAsync(
                     "file_resume123",
                     new string('e', 64));
+            }
+
+            if (FailBeforeImageGenerationOnce)
+            {
+                FailBeforeImageGenerationOnce = false;
+                throw new Tripo.Mcp.TripoWorkflowException(
+                    "Stopped before image generation dispatch.");
             }
 
             await checkpoint.BeforeImageGenerationAsync(cancellationToken);

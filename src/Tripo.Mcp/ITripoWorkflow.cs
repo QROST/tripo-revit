@@ -23,7 +23,6 @@ public interface ITripoWorkflow
         string prompt,
         int faceLimit,
         bool withMaterials,
-        string documentSessionId,
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
@@ -33,7 +32,6 @@ public interface ITripoWorkflow
         Tripo.Bridge.StagedImageTransfer image,
         int faceLimit,
         bool withMaterials,
-        string documentSessionId,
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
@@ -45,7 +43,6 @@ public interface ITripoWorkflow
         string sourceTaskId,
         int faceLimit,
         bool withMaterials,
-        string documentSessionId,
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
@@ -62,7 +59,6 @@ public interface ITripoWorkflow
 
     Task<ObjTaskStageReceipt> StageObjTaskAsync(
         string conversionTaskId,
-        string documentSessionId,
         bool includeMaterials,
         CancellationToken cancellationToken) =>
         throw new NotSupportedException(

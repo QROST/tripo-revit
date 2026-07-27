@@ -190,7 +190,6 @@ internal sealed class HostControlDispatcher :
                     request.Prompt,
                     request.FaceLimit,
                     request.WithMaterials,
-                    request.DocumentSessionId,
                     request.OperationId,
                     request.ConfirmExternalCost,
                     cancellationToken,
@@ -239,7 +238,6 @@ internal sealed class HostControlDispatcher :
                     request.Image,
                     request.FaceLimit,
                     request.WithMaterials,
-                    request.DocumentSessionId,
                     request.OperationId,
                     request.ConfirmExternalCost,
                     cancellationToken,
@@ -294,7 +292,6 @@ internal sealed class HostControlDispatcher :
                     request.SourceTaskId,
                     request.FaceLimit,
                     request.WithMaterials,
-                    request.DocumentSessionId,
                     request.OperationId,
                     request.ConfirmExternalCost,
                     cancellationToken,
@@ -341,7 +338,6 @@ internal sealed class HostControlDispatcher :
         ObjTaskStageReceipt receipt =
             await _workflow.StageObjTaskAsync(
                     request.ConversionTaskId,
-                    request.DocumentSessionId,
                     request.IncludeMaterials,
                     cancellationToken)
                 .ConfigureAwait(false);

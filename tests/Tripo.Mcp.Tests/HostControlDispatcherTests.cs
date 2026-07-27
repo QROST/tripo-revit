@@ -39,13 +39,11 @@ public sealed class HostControlDispatcherTests
         Tripo.Mcp.HostControlDispatcher dispatcher = CreateDispatcher(
             new FakeCredentialService(),
             workflow);
-        string sessionId = Guid.NewGuid().ToString("D");
         string operationId = Guid.NewGuid().ToString("D");
         Tripo.Bridge.HostControlCreateTextTaskRequest request = new(
             "a timber pavilion",
             25_000,
             WithMaterials: true,
-            sessionId,
             operationId,
             ConfirmExternalCost: true,
             RequireExistingOperation: true);
@@ -78,7 +76,6 @@ public sealed class HostControlDispatcherTests
             12_000,
             WithMaterials: true,
             Guid.NewGuid().ToString("D"),
-            Guid.NewGuid().ToString("D"),
             ConfirmExternalCost: true,
             RequireExistingOperation: true);
 
@@ -104,7 +101,6 @@ public sealed class HostControlDispatcherTests
             workflow);
         Tripo.Bridge.HostControlStageObjTaskRequest request = new(
             "task_conversion123",
-            Guid.NewGuid().ToString("D"),
             IncludeMaterials: true);
 
         object result = await dispatcher.DispatchAsync(
@@ -163,7 +159,6 @@ public sealed class HostControlDispatcherTests
             10_000,
             WithMaterials: false,
             Guid.NewGuid().ToString("D"),
-            Guid.NewGuid().ToString("D"),
             ConfirmExternalCost: true,
             RequireExistingOperation: false);
 
@@ -194,7 +189,6 @@ public sealed class HostControlDispatcherTests
             "a chair",
             10_000,
             WithMaterials: false,
-            Guid.NewGuid().ToString("D"),
             Guid.NewGuid().ToString("D"),
             ConfirmExternalCost: true,
             RequireExistingOperation: false);
@@ -229,7 +223,6 @@ public sealed class HostControlDispatcherTests
                 "image/png"),
             10_000,
             WithMaterials: false,
-            Guid.NewGuid().ToString("D"),
             Guid.NewGuid().ToString("D"),
             ConfirmExternalCost: true,
             RequireExistingOperation: false);
@@ -397,7 +390,6 @@ public sealed class HostControlDispatcherTests
             string prompt,
             int faceLimit,
             bool withMaterials,
-            string documentSessionId,
             string operationId,
             bool confirmExternalCost,
             CancellationToken cancellationToken,
@@ -424,7 +416,6 @@ public sealed class HostControlDispatcherTests
                 prompt,
                 faceLimit,
                 withMaterials,
-                documentSessionId,
                 operationId,
                 confirmExternalCost,
                 requireExistingOperation);
@@ -440,7 +431,6 @@ public sealed class HostControlDispatcherTests
                 string sourceTaskId,
                 int faceLimit,
                 bool withMaterials,
-                string documentSessionId,
                 string operationId,
                 bool confirmExternalCost,
                 CancellationToken cancellationToken,
@@ -456,7 +446,6 @@ public sealed class HostControlDispatcherTests
             Tripo.Bridge.StagedImageTransfer image,
             int faceLimit,
             bool withMaterials,
-            string documentSessionId,
             string operationId,
             bool confirmExternalCost,
             CancellationToken cancellationToken,
@@ -475,7 +464,6 @@ public sealed class HostControlDispatcherTests
                     image,
                     faceLimit,
                     withMaterials,
-                    documentSessionId,
                     operationId,
                     confirmExternalCost,
                     requireExistingOperation);
@@ -489,14 +477,12 @@ public sealed class HostControlDispatcherTests
 
         public Task<Tripo.Mcp.ObjTaskStageReceipt> StageObjTaskAsync(
             string conversionTaskId,
-            string documentSessionId,
             bool includeMaterials,
             CancellationToken cancellationToken)
         {
             LastStageRequest =
                 new Tripo.Bridge.HostControlStageObjTaskRequest(
                     conversionTaskId,
-                    documentSessionId,
                     includeMaterials);
             return Task.FromResult(
                 new Tripo.Mcp.ObjTaskStageReceipt(

@@ -6,8 +6,6 @@ namespace Tripo.Mcp.Tests;
 
 public sealed class TripoV3ClientTests
 {
-    private const string DocumentSessionId =
-        "11111111-1111-1111-1111-111111111111";
     private const string CanonicalTaskId =
         "ef731ad6-aeb0-4950-9a2e-2298359dfaf8";
 
@@ -32,7 +30,6 @@ public sealed class TripoV3ClientTests
 
         string taskId = await client.CreateTextModelAsync(
             options,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -69,7 +66,6 @@ public sealed class TripoV3ClientTests
 
         string taskId = await client.CreateTextModelAsync(
             options,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -94,7 +90,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
             () => client.CreateTextModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -130,7 +125,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
             () => client.CreateTextModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -155,7 +149,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
             () => client.CreateTextModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -185,7 +178,6 @@ public sealed class TripoV3ClientTests
                 Tripo.Mcp.TripoPaidRequestRejectedException>(
                 () => client.CreateTextModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -218,7 +210,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateTextModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -247,15 +238,13 @@ public sealed class TripoV3ClientTests
         string fingerprint = client.GetObjConversionOperationFingerprint(
             "task_source123",
             12_000,
-            withMaterials: false,
-            DocumentSessionId);
+            withMaterials: false);
         RecordingCheckpoint checkpoint = new(fingerprint);
 
         string taskId = await client.CreateObjConversionAsync(
             "task_source123",
             12_000,
             withMaterials: false,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -288,11 +277,10 @@ public sealed class TripoV3ClientTests
             Tripo.Mcp.TripoV3Client.DefaultModel,
             WithMaterials: true);
         RecordingCheckpoint checkpoint = new(
-            client.GetTextTaskOperationFingerprint(options, DocumentSessionId));
+            client.GetTextTaskOperationFingerprint(options));
 
         await client.CreateTextModelAsync(
             options,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -346,7 +334,6 @@ public sealed class TripoV3ClientTests
 
         string taskId = await client.CreateImageModelAsync(
             options,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -407,7 +394,6 @@ public sealed class TripoV3ClientTests
                 Tripo.Mcp.TripoPaidRequestRejectedException>(
                 () => client.CreateImageModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -447,7 +433,6 @@ public sealed class TripoV3ClientTests
                 Tripo.Mcp.TripoPaidRequestRejectedException>(
                 () => client.CreateImageModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -498,7 +483,6 @@ public sealed class TripoV3ClientTests
                 Tripo.Mcp.TripoPaidRequestRejectedException>(
                 () => client.CreateImageModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -532,7 +516,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateImageModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -568,7 +551,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
             () => client.CreateImageModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -598,7 +580,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
             () => client.CreateImageModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -631,7 +612,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<IOException>(
             () => firstClient.CreateImageModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -651,7 +631,6 @@ public sealed class TripoV3ClientTests
 
         string taskId = await resumedClient.CreateImageModelAsync(
             options,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -683,7 +662,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateImageModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -719,7 +697,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateImageModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -767,7 +744,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateImageModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -792,14 +768,12 @@ public sealed class TripoV3ClientTests
             client.GetObjConversionOperationFingerprint(
                 "task_source123",
                 12_000,
-                withMaterials: true,
-                DocumentSessionId));
+                withMaterials: true));
 
         await client.CreateObjConversionAsync(
             "task_source123",
             12_000,
             withMaterials: true,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -815,25 +789,21 @@ public sealed class TripoV3ClientTests
         Tripo.Mcp.TripoV3Client client = CreateClient(handler);
 
         string textWithout = client.GetTextTaskOperationFingerprint(
-            new Tripo.Mcp.TextGenerationOptions("a chair", 10_000),
-            DocumentSessionId);
+            new Tripo.Mcp.TextGenerationOptions("a chair", 10_000));
         string textWith = client.GetTextTaskOperationFingerprint(
             new Tripo.Mcp.TextGenerationOptions(
                 "a chair",
                 10_000,
                 Tripo.Mcp.TripoV3Client.DefaultModel,
-                WithMaterials: true),
-            DocumentSessionId);
+                WithMaterials: true));
         string conversionWithout = client.GetObjConversionOperationFingerprint(
             "task_source123",
             10_000,
-            withMaterials: false,
-            DocumentSessionId);
+            withMaterials: false);
         string conversionWith = client.GetObjConversionOperationFingerprint(
             "task_source123",
             10_000,
-            withMaterials: true,
-            DocumentSessionId);
+            withMaterials: true);
 
         Assert.NotEqual(textWithout, textWith);
         Assert.NotEqual(conversionWithout, conversionWith);
@@ -854,7 +824,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateTextModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -883,7 +852,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateTextModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -908,7 +876,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateTextModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -935,7 +902,6 @@ public sealed class TripoV3ClientTests
 
         await client.CreateTextModelAsync(
             options,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -958,7 +924,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<IOException>(
             () => client.CreateTextModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -983,7 +948,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => client.CreateTextModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 cancellation.Token));
 
@@ -1007,7 +971,6 @@ public sealed class TripoV3ClientTests
             await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
                 () => client.CreateTextModelAsync(
                     options,
-                    DocumentSessionId,
                     checkpoint,
                     CancellationToken.None));
 
@@ -1031,7 +994,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
             () => client.CreateTextModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -1050,14 +1012,11 @@ public sealed class TripoV3ClientTests
             CreateClient(handler, () => "second_key");
 
         string first = firstClient.GetTextTaskOperationFingerprint(
-            new Tripo.Mcp.TextGenerationOptions("a chair", 10_000),
-            DocumentSessionId);
+            new Tripo.Mcp.TextGenerationOptions("a chair", 10_000));
         string changedKey = secondClient.GetTextTaskOperationFingerprint(
-            new Tripo.Mcp.TextGenerationOptions("a chair", 10_000),
-            DocumentSessionId);
+            new Tripo.Mcp.TextGenerationOptions("a chair", 10_000));
         string changedPrompt = firstClient.GetTextTaskOperationFingerprint(
-            new Tripo.Mcp.TextGenerationOptions("a table", 10_000),
-            DocumentSessionId);
+            new Tripo.Mcp.TextGenerationOptions("a table", 10_000));
 
         Assert.NotEqual(first, changedKey);
         Assert.NotEqual(first, changedPrompt);
@@ -1081,7 +1040,6 @@ public sealed class TripoV3ClientTests
         await Assert.ThrowsAsync<Tripo.Mcp.TripoApiException>(
             () => client.CreateTextModelAsync(
                 options,
-                DocumentSessionId,
                 checkpoint,
                 CancellationToken.None));
 
@@ -1236,11 +1194,10 @@ public sealed class TripoV3ClientTests
         Tripo.Mcp.TextGenerationOptions options =
             new("a test chair", 10_000, "tripo-v3.1");
         RecordingCheckpoint checkpoint = new(
-            client.GetTextTaskOperationFingerprint(options, DocumentSessionId));
+            client.GetTextTaskOperationFingerprint(options));
 
         string taskId = await client.CreateTextModelAsync(
             options,
-            DocumentSessionId,
             checkpoint,
             CancellationToken.None);
 
@@ -1263,7 +1220,7 @@ public sealed class TripoV3ClientTests
             new("a test chair", 10_000);
 
         Assert.Throws<Tripo.Mcp.TripoApiException>(
-            () => client.GetTextTaskOperationFingerprint(options, DocumentSessionId));
+            () => client.GetTextTaskOperationFingerprint(options));
 
         Assert.Equal(0, handler.CallCount);
     }
@@ -1288,7 +1245,7 @@ public sealed class TripoV3ClientTests
     private static RecordingCheckpoint CreateCheckpoint(
         Tripo.Mcp.TripoV3Client client,
         Tripo.Mcp.TextGenerationOptions options) =>
-        new(client.GetTextTaskOperationFingerprint(options, DocumentSessionId));
+        new(client.GetTextTaskOperationFingerprint(options));
 
     private static readonly byte[] TestPngBytes =
     [
@@ -1322,8 +1279,7 @@ public sealed class TripoV3ClientTests
         Tripo.Mcp.ImageGenerationOptions options) =>
         new(
             client.GetImageTaskOperationFingerprint(
-                options,
-                DocumentSessionId));
+                options));
 
     private sealed class RecordingCheckpoint :
         Tripo.Mcp.ITaskCreationCheckpoint

@@ -36,7 +36,7 @@ public sealed class McpToolSchemaTests
             tool => tool.ProtocolTool.Name == "tripo_create_text_task");
         string schema = create.ProtocolTool.InputSchema.ToString();
         Assert.Contains("confirmExternalCost", schema, StringComparison.Ordinal);
-        Assert.Contains("documentSessionId", schema, StringComparison.Ordinal);
+        Assert.DoesNotContain("documentSessionId", schema, StringComparison.Ordinal);
         Assert.Contains("operationId", schema, StringComparison.Ordinal);
         Assert.Contains("withMaterials", schema, StringComparison.Ordinal);
         Assert.DoesNotContain("CancellationToken", schema, StringComparison.Ordinal);
@@ -44,9 +44,12 @@ public sealed class McpToolSchemaTests
 
         McpServerTool conversion = tools.Single(
             tool => tool.ProtocolTool.Name == "tripo_create_obj_conversion");
-        Assert.Contains(
-            "withMaterials",
-            conversion.ProtocolTool.InputSchema.ToString(),
+        string conversionSchema =
+            conversion.ProtocolTool.InputSchema.ToString();
+        Assert.Contains("withMaterials", conversionSchema, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "documentSessionId",
+            conversionSchema,
             StringComparison.Ordinal);
 
         McpServerTool createImage = tools.Single(
@@ -60,7 +63,7 @@ public sealed class McpToolSchemaTests
             "confirmExternalCost",
             imageSchema,
             StringComparison.Ordinal);
-        Assert.Contains(
+        Assert.DoesNotContain(
             "documentSessionId",
             imageSchema,
             StringComparison.Ordinal);
@@ -89,6 +92,10 @@ public sealed class McpToolSchemaTests
         McpServerTool import = tools.Single(
             tool => tool.ProtocolTool.Name == "tripo_import_obj_task");
         string importSchema = import.ProtocolTool.InputSchema.ToString();
+        Assert.Contains(
+            "documentSessionId",
+            importSchema,
+            StringComparison.Ordinal);
         Assert.Contains("operationId", importSchema, StringComparison.Ordinal);
         Assert.Contains("importMode", importSchema, StringComparison.Ordinal);
         Assert.Contains("applyMaterials", importSchema, StringComparison.Ordinal);

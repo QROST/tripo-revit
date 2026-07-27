@@ -38,6 +38,29 @@ public sealed class PaidOperationJournalTests
     }
 
     [Fact]
+    public async Task CurrentJournalSchemaOmitsDocumentIdentity()
+    {
+        using TemporaryJournalRoot root = new();
+        string operationId = Guid.NewGuid().ToString("D");
+        await using (Tripo.Mcp.PaidOperationLease lease =
+                     await new Tripo.Mcp.PaidOperationJournal(root.Path)
+                         .AcquireAsync(
+                             TextDescriptor(operationId),
+                             CancellationToken.None))
+        {
+        }
+
+        string journal = await File.ReadAllTextAsync(
+            JournalPath(root.Path, operationId));
+
+        Assert.Contains("\"schemaVersion\":2", journal, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "documentSessionId",
+            journal,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task RecoveredUiRetryRefusesAReplacementMissingJournal()
     {
         using TemporaryJournalRoot root = new(create: false);
@@ -83,7 +106,6 @@ public sealed class PaidOperationJournalTests
         Assert.Throws<Tripo.Mcp.TripoWorkflowException>(
             () => Tripo.Mcp.PaidOperationDescriptor.ForTextTask(
                 Guid.NewGuid().ToString("D"),
-                "11111111-1111-1111-1111-111111111111",
                 new string('A', 64)));
     }
 
@@ -342,7 +364,6 @@ public sealed class PaidOperationJournalTests
         Tripo.Mcp.PaidOperationDescriptor changed =
             Tripo.Mcp.PaidOperationDescriptor.ForImageTask(
                 operationId,
-                "11111111-1111-1111-1111-111111111111",
                 new string('d', 64),
                 changedImage);
 
@@ -504,8 +525,11 @@ public sealed class PaidOperationJournalTests
         Assert.True(lease.Status.CanResumeCreation);
     }
 
-    [Fact]
-    public async Task LegacyV1ChecksumRemainsReadableAndAppendable()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyV1JournalFailsClosedWithoutAppending(
+        bool hasFinalNewline)
     {
         using TemporaryJournalRoot root = new();
         const string operationId =
@@ -516,28 +540,22 @@ public sealed class PaidOperationJournalTests
             """;
         await File.WriteAllBytesAsync(
             JournalPath(root.Path, operationId),
-            Encoding.UTF8.GetBytes(legacyRecord.Trim() + "\n"));
-        Tripo.Mcp.PaidOperationDescriptor descriptor =
-            TextDescriptor(operationId);
+            Encoding.UTF8.GetBytes(
+                legacyRecord.Trim() + (hasFinalNewline ? "\n" : string.Empty)));
+        string path = JournalPath(root.Path, operationId);
+        long originalLength = new FileInfo(path).Length;
+        Tripo.Mcp.PaidOperationJournal journal = new(root.Path);
 
-        await using (Tripo.Mcp.PaidOperationLease lease =
-                     await new Tripo.Mcp.PaidOperationJournal(root.Path)
-                         .AcquireAsync(
-                             descriptor,
-                             CancellationToken.None))
-        {
-            Assert.Equal("prepared", lease.Status.State);
-            await lease.BeforeSendAsync(CancellationToken.None);
-            await lease.TaskIdReceivedAsync("task_legacy123");
-        }
+        await Assert.ThrowsAsync<Tripo.Mcp.TripoWorkflowException>(
+            () => journal.AcquireAsync(
+                TextDescriptor(operationId),
+                CancellationToken.None));
+        await Assert.ThrowsAsync<Tripo.Mcp.TripoWorkflowException>(
+            () => journal.GetStatusAsync(
+                operationId,
+                CancellationToken.None));
 
-        Tripo.Mcp.PaidOperationStatusReceipt status =
-            await new Tripo.Mcp.PaidOperationJournal(root.Path)
-                .GetStatusAsync(
-                    operationId,
-                    CancellationToken.None);
-        Assert.Equal("task_id_persisted", status.State);
-        Assert.Equal("task_legacy123", status.CreatedTaskId);
+        Assert.Equal(originalLength, new FileInfo(path).Length);
     }
 
     [Fact]
@@ -616,14 +634,12 @@ public sealed class PaidOperationJournalTests
         char fingerprintCharacter = 'a') =>
         Tripo.Mcp.PaidOperationDescriptor.ForTextTask(
             operationId,
-            "11111111-1111-1111-1111-111111111111",
             new string(fingerprintCharacter, 64));
 
     private static Tripo.Mcp.PaidOperationDescriptor ImageDescriptor(
         string operationId) =>
         Tripo.Mcp.PaidOperationDescriptor.ForImageTask(
             operationId,
-            "11111111-1111-1111-1111-111111111111",
             new string('d', 64),
             new Tripo.Bridge.StagedImageTransfer(
                 "11111111-1111-1111-1111-111111111111",

@@ -129,14 +129,37 @@ public sealed class HostControlSetApiKeyRequest
 public sealed record HostControlCredentialMutationReceipt(
     HostControlCredentialStatusReceipt Status);
 
-public sealed record HostControlCreateTextTaskRequest(
-    string Prompt,
-    int FaceLimit,
-    bool WithMaterials,
-    string DocumentSessionId,
-    string OperationId,
-    bool ConfirmExternalCost,
-    bool RequireExistingOperation = false);
+public sealed record HostControlCreateTextTaskRequest
+{
+    [JsonConstructor]
+    public HostControlCreateTextTaskRequest(
+        string Prompt,
+        int FaceLimit,
+        bool WithMaterials,
+        string OperationId,
+        bool ConfirmExternalCost,
+        bool RequireExistingOperation = false)
+    {
+        this.Prompt = Prompt;
+        this.FaceLimit = FaceLimit;
+        this.WithMaterials = WithMaterials;
+        this.OperationId = OperationId;
+        this.ConfirmExternalCost = ConfirmExternalCost;
+        this.RequireExistingOperation = RequireExistingOperation;
+    }
+
+    public string Prompt { get; }
+
+    public int FaceLimit { get; }
+
+    public bool WithMaterials { get; }
+
+    public string OperationId { get; }
+
+    public bool ConfirmExternalCost { get; }
+
+    public bool RequireExistingOperation { get; }
+}
 
 public sealed record HostControlTextTaskCreationReceipt(
     string OperationId,
@@ -147,7 +170,6 @@ public sealed record HostControlCreateImageTaskRequest(
     StagedImageTransfer Image,
     int FaceLimit,
     bool WithMaterials,
-    string DocumentSessionId,
     string OperationId,
     bool ConfirmExternalCost,
     bool RequireExistingOperation = false);
@@ -189,14 +211,37 @@ public sealed record HostControlOperationStatusReceipt(
     string? FailureStage = null,
     bool OperationInProgress = false);
 
-public sealed record HostControlCreateObjConversionRequest(
-    string SourceTaskId,
-    int FaceLimit,
-    bool WithMaterials,
-    string DocumentSessionId,
-    string OperationId,
-    bool ConfirmExternalCost,
-    bool RequireExistingOperation = false);
+public sealed record HostControlCreateObjConversionRequest
+{
+    [JsonConstructor]
+    public HostControlCreateObjConversionRequest(
+        string SourceTaskId,
+        int FaceLimit,
+        bool WithMaterials,
+        string OperationId,
+        bool ConfirmExternalCost,
+        bool RequireExistingOperation = false)
+    {
+        this.SourceTaskId = SourceTaskId;
+        this.FaceLimit = FaceLimit;
+        this.WithMaterials = WithMaterials;
+        this.OperationId = OperationId;
+        this.ConfirmExternalCost = ConfirmExternalCost;
+        this.RequireExistingOperation = RequireExistingOperation;
+    }
+
+    public string SourceTaskId { get; }
+
+    public int FaceLimit { get; }
+
+    public bool WithMaterials { get; }
+
+    public string OperationId { get; }
+
+    public bool ConfirmExternalCost { get; }
+
+    public bool RequireExistingOperation { get; }
+}
 
 public sealed record HostControlObjConversionCreationReceipt(
     string OperationId,
@@ -220,7 +265,6 @@ public sealed record HostControlObjTaskImportReceipt(
 
 public sealed record HostControlStageObjTaskRequest(
     string ConversionTaskId,
-    string DocumentSessionId,
     bool IncludeMaterials);
 
 public sealed record HostControlObjTaskStageReceipt(

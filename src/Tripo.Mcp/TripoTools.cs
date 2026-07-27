@@ -23,7 +23,7 @@ public sealed class TripoTools
         UseStructuredContent = true)]
     [Description(
         "Return the connected Rhino or Revit process and the exact active-document " +
-        "session UUID required by later stages. This tool does not call the Tripo API.")]
+        "session UUID required for import. This tool does not call the Tripo API.")]
     public Task<Tripo.Bridge.HostContextReceipt> GetHostContextAsync(
         CancellationToken cancellationToken) =>
         InvokeAsync(
@@ -85,8 +85,6 @@ public sealed class TripoTools
             "When true, request textured PBR materials (texture and pbr); this raises " +
             "the credit cost and generation time. When false, generate geometry only.")] bool withMaterials,
         [Description(
-            "Exact document-session UUID returned by tripo_host_context.")] string documentSessionId,
-        [Description(
             "Caller-generated UUID. Reuse it with identical arguments after any " +
             "lost response; never replace it merely to retry.")] string operationId,
         [Description(
@@ -97,7 +95,6 @@ public sealed class TripoTools
                 prompt,
                 faceLimit,
                 withMaterials,
-                documentSessionId,
                 operationId,
                 confirmExternalCost,
                 cancellationToken),
@@ -149,8 +146,6 @@ public sealed class TripoTools
             "When true, request textured PBR materials; when false, generate " +
             "geometry only.")] bool withMaterials,
         [Description(
-            "Exact document-session UUID returned by tripo_host_context.")] string documentSessionId,
-        [Description(
             "Caller-generated UUID. Reuse it with identical arguments after a " +
             "lost response.")] string operationId,
         [Description(
@@ -166,7 +161,6 @@ public sealed class TripoTools
                     mediaType),
                 faceLimit,
                 withMaterials,
-                documentSessionId,
                 operationId,
                 confirmExternalCost,
                 cancellationToken),
@@ -191,8 +185,6 @@ public sealed class TripoTools
             "When true, bake a diffuse material library (bake=true) so the OBJ ships " +
             "with an MTL and image textures. When false, convert geometry only.")] bool withMaterials,
         [Description(
-            "Exact document-session UUID returned by tripo_host_context.")] string documentSessionId,
-        [Description(
             "Caller-generated UUID dedicated to this conversion. Reuse it with " +
             "identical arguments after any lost response.")] string operationId,
         [Description(
@@ -203,7 +195,6 @@ public sealed class TripoTools
                 sourceTaskId,
                 faceLimit,
                 withMaterials,
-                documentSessionId,
                 operationId,
                 confirmExternalCost,
                 cancellationToken),

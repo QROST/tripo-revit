@@ -835,6 +835,58 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
+    public async Task CanonicalTaskUuidsPassReceiptJournalAndStatusValidation()
+    {
+        const string generationTaskId =
+            "ef731ad6-aeb0-4950-9a2e-2298359dfaf8";
+        const string conversionTaskId =
+            "31c84619-872d-4c3f-95f4-a5f4eb16f75d";
+        FakeHostControlClient client = new()
+        {
+            TextTaskId = generationTaskId,
+            ConversionTaskId = conversionTaskId,
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        session.PrepareGeneration(
+            "a chair",
+            10_000,
+            withMaterials: false);
+
+        await session.DispatchPreparedGenerationAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshGenerationStatusAsync();
+
+        Assert.Equal(
+            generationTaskId,
+            session.State.GenerationReceipt?.TaskId);
+        Assert.Equal(
+            generationTaskId,
+            session.State.GenerationOperationStatus?.CreatedTaskId);
+        Assert.Equal(
+            generationTaskId,
+            session.State.GenerationStatus?.TaskId);
+
+        session.PrepareConversion(
+            10_000,
+            withMaterials: false);
+        await session.DispatchPreparedConversionAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshConversionStatusAsync();
+
+        Assert.Equal(
+            conversionTaskId,
+            session.State.ConversionReceipt?.ConversionTaskId);
+        Assert.Equal(
+            conversionTaskId,
+            session.State.ConversionOperationStatus?.CreatedTaskId);
+        Assert.Equal(
+            conversionTaskId,
+            session.State.ConversionStatus?.TaskId);
+    }
+
+    [Fact]
     public async Task GenerationCreationReceiptMismatchRemainsUnresolved()
     {
         FakeHostControlClient client = new()
@@ -3118,6 +3170,69 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
+    public void RecoveryStorePersistsCanonicalTaskUuidWithoutRewritingIt()
+    {
+        const string documentSessionId =
+            "11111111-1111-4111-8111-111111111111";
+        const string operationId =
+            "22222222-2222-4222-8222-222222222222";
+        const string taskId =
+            "ef731ad6-aeb0-4950-9a2e-2298359dfaf8";
+        string root = CreateTemporaryRoot();
+        try
+        {
+            using Tripo.HostUi.TripoPanelRecoveryStore store =
+                new("revit", root);
+            Tripo.HostUi.TripoPanelState state =
+                Tripo.HostUi.TripoPanelState.Initial with
+                {
+                    Connected = true,
+                    Context = new Tripo.Bridge.HostContextReceipt(
+                        "revit",
+                        "2026-test",
+                        123,
+                        documentSessionId,
+                        "Test.rvt",
+                        "Feet",
+                        []),
+                    PreparedGeneration =
+                        new Tripo.HostUi.PreparedTextGeneration(
+                            "a chair",
+                            10_000,
+                            false,
+                            documentSessionId,
+                            operationId),
+                    GenerationDispatchAttempted = true,
+                    GenerationReceipt =
+                        new Tripo.Bridge.HostControlTextTaskCreationReceipt(
+                            operationId,
+                            taskId,
+                            "v3.1-20260211"),
+                };
+
+            store.Save(state);
+
+            string file = Assert.Single(
+                Directory.GetFiles(
+                    Path.Combine(root, "ui-recovery", "revit"),
+                    "*.json"));
+            Tripo.HostUi.TripoPanelRecoveryHint hint =
+                System.Text.Json.JsonSerializer.Deserialize<
+                    Tripo.HostUi.TripoPanelRecoveryHint>(
+                    File.ReadAllText(file),
+                    Tripo.Bridge.BridgeJson.Options)
+                ?? throw new InvalidOperationException(
+                    "The recovery hint could not be read.");
+            Assert.Equal(taskId, hint.Generation?.TaskId);
+            Assert.True(hint.Generation?.TaskIdDurable);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task CurrentHintExclusionRequiresExactOwnerIdentity()
     {
         string root = CreateTemporaryRoot();
@@ -3848,6 +3963,11 @@ public sealed class TripoPanelSessionTests
 
         public string? TextFailureCode { get; set; }
 
+        public string TextTaskId { get; set; } = "task_source123";
+
+        public string ConversionTaskId { get; set; } =
+            "task_conversion123";
+
         public bool FailFirstConversionResponse { get; set; }
 
         public string FirstConversionFailureCode { get; set; } =
@@ -4025,12 +4145,12 @@ public sealed class TripoPanelSessionTests
             OperationStatuses[request.OperationId] =
                 DurableOperationStatus(
                     request.OperationId,
-                    "task_source123");
+                    TextTaskId);
             return Task.FromResult(
                 new Tripo.Bridge.HostControlTextTaskCreationReceipt(
                     TextReceiptOperationIdOverride ??
                     request.OperationId,
-                    TextReceiptTaskIdOverride ?? "task_source123",
+                    TextReceiptTaskIdOverride ?? TextTaskId,
                     "v3.1-20260211"));
         }
 
@@ -4049,7 +4169,7 @@ public sealed class TripoPanelSessionTests
             return new Tripo.Bridge.HostControlTaskStatusReceipt(
                 TaskStatusTaskIdOverride ?? taskId,
                 TaskStatusTypeOverride ??
-                (taskId == "task_source123"
+                (taskId == TextTaskId
                     ? "text_to_model"
                     : "convert_model"),
                 "success",
@@ -4114,7 +4234,7 @@ public sealed class TripoPanelSessionTests
                     "obj_conversion_creation",
                     "task_id_persisted",
                     request.SourceTaskId,
-                    "task_conversion123",
+                    ConversionTaskId,
                     null,
                     null,
                     TaskIdDurable: true,
@@ -4127,7 +4247,7 @@ public sealed class TripoPanelSessionTests
                     request.OperationId,
                     request.SourceTaskId,
                     ConversionReceiptTaskIdOverride ??
-                    "task_conversion123",
+                    ConversionTaskId,
                     ConversionReceiptFormatOverride ?? "OBJ"));
         }
 

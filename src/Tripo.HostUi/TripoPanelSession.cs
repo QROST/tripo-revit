@@ -2023,31 +2023,8 @@ public sealed class TripoPanelSession : IAsyncDisposable
         }
     }
 
-    private static bool IsValidTaskId(string? taskId)
-    {
-        if (string.IsNullOrWhiteSpace(taskId) ||
-            taskId.Length is < 8 or > 133 ||
-            !taskId.StartsWith("task_", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        for (int index = 5; index < taskId.Length; index++)
-        {
-            char character = taskId[index];
-            bool allowed =
-                character is >= 'A' and <= 'Z' or
-                >= 'a' and <= 'z' or
-                >= '0' and <= '9' or
-                '_' or '-';
-            if (!allowed)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    private static bool IsValidTaskId(string? taskId) =>
+        Tripo.Bridge.TripoTaskId.IsValid(taskId);
 
     private static void ValidateTaskStatus(
         Tripo.Bridge.HostControlTaskStatusReceipt status,

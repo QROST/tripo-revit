@@ -453,6 +453,10 @@ public sealed class ArtifactStager : IArtifactStager
         {
             Tripo.Bridge.BridgePaths.TryDelete(tempPath);
         }
+        catch (UnauthorizedAccessException) when (File.Exists(destinationPath))
+        {
+            Tripo.Bridge.BridgePaths.TryDelete(tempPath);
+        }
 
         if (File.Exists(destinationPath))
         {

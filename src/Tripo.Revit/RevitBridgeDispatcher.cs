@@ -652,18 +652,32 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
         }
 
         builder.CloseConnectedFaceSet();
-        builder.Target = TessellatedShapeBuilderTarget.AnyGeometry;
-        builder.Fallback = TessellatedShapeBuilderFallback.Mesh;
+        // Tripo produces a display mesh, not a guaranteed watertight BRep.
+        // Ask Revit for a mesh directly and let it salvage valid facets from
+        // non-manifold/open inputs instead of first trying to construct a
+        // sheet or solid. HasInvalidData is diagnostic in this mode: Revit can
+        // still return a usable mesh after discarding inconsistent facets.
+        builder.Target = TessellatedShapeBuilderTarget.Mesh;
+        builder.Fallback = TessellatedShapeBuilderFallback.Salvage;
         builder.Build();
         using TessellatedShapeBuilderResult result = builder.GetBuildResult();
-        if (!result.AreObjectsAvailable || result.HasInvalidData)
+        if (!result.AreObjectsAvailable ||
+            result.Outcome == TessellatedShapeBuilderOutcome.Nothing)
         {
             throw new Tripo.Bridge.BridgeCallException(
                 "revit_geometry_invalid",
-                "Revit could not build geometry from the prepared mesh.");
+                "Revit could not build any geometry from the prepared mesh.");
         }
 
-        return result.GetGeometricalObjects();
+        IList<GeometryObject> geometry = result.GetGeometricalObjects();
+        if (geometry.Count == 0)
+        {
+            throw new Tripo.Bridge.BridgeCallException(
+                "revit_geometry_invalid",
+                "Revit returned no geometry from the prepared mesh.");
+        }
+
+        return geometry;
     }
 
     // Creates one Revit material per prepared slot in the target document (host

@@ -1419,7 +1419,7 @@ internal sealed class TripoRevitWindow : Window
     }
 
     private static void AddIdentity(
-        ICollection<string> lines,
+        List<string> lines,
         string label,
         string? value)
     {

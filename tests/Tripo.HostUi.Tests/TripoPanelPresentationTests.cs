@@ -48,6 +48,8 @@ public sealed class TripoPanelPresentationTests
             presentation.ClearApiKeyHelp,
             StringComparison.OrdinalIgnoreCase);
         Assert.True(presentation.GenerateEnabled);
+        Assert.True(presentation.PrimaryActionEnabled);
+        Assert.Equal("Create in Revit", presentation.PrimaryActionText);
         Assert.False(presentation.ConvertEnabled);
         Assert.False(presentation.ImportEnabled);
         Assert.False(presentation.NameEnabled);
@@ -57,6 +59,23 @@ public sealed class TripoPanelPresentationTests
         Assert.False(presentation.PromptValidationVisible);
         Assert.False(presentation.FaceLimitValidationVisible);
         Assert.False(presentation.ObjectNameValidationVisible);
+        Assert.False(presentation.PipelineProgressVisible);
+    }
+
+    [Fact]
+    public void PipelineStageOverrideSurfacesUnifiedProgress()
+    {
+        Tripo.HostUi.TripoPanelPresentation presentation =
+            Present(
+                ReadyState(),
+                currentAction: "Creating…",
+                pipelineStageLabel: "Generating…",
+                pipelineProgressOverride: 12);
+
+        Assert.Equal("Generating…", presentation.PipelineStageLabel);
+        Assert.True(presentation.PipelineProgressVisible);
+        Assert.Equal(12, presentation.PipelineProgress);
+        Assert.False(presentation.PrimaryActionEnabled);
     }
 
     [Theory]
@@ -1186,7 +1205,9 @@ public sealed class TripoPanelPresentationTests
         bool conversionRefreshFailed = false,
         bool generationJournalUpdatedOnFailedRefresh = false,
         bool conversionJournalUpdatedOnFailedRefresh = false,
-        bool recoveryInspectionHadFailures = false) =>
+        bool recoveryInspectionHadFailures = false,
+        string? pipelineStageLabel = null,
+        int? pipelineProgressOverride = null) =>
         Tripo.HostUi.TripoPanelPresentation.Create(
             state,
             recovery ?? Tripo.HostUi.TripoPanelRecoveryLoadResult.Empty,
@@ -1201,7 +1222,9 @@ public sealed class TripoPanelPresentationTests
             conversionRefreshFailed,
             generationJournalUpdatedOnFailedRefresh,
             conversionJournalUpdatedOnFailedRefresh,
-            recoveryInspectionHadFailures);
+            recoveryInspectionHadFailures,
+            pipelineStageLabel,
+            pipelineProgressOverride);
 
     private static Tripo.HostUi.TripoPanelState ReadyState() =>
         Tripo.HostUi.TripoPanelState.Initial with

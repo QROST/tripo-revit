@@ -20,7 +20,13 @@ public sealed record PreparedObjImport(
     string ImportMode,
     bool ApplyMaterials,
     string TargetDocumentTitle = "",
-    string TargetHost = "");
+    string TargetHost = "",
+    string PlacementMode = "origin",
+    bool AssociateLevel = false);
+
+public sealed record TripoPipelineProgress(
+    string StageLabel,
+    int? ProgressPercent);
 
 public sealed record CompletedObjImport(
     PreparedObjImport Prepared,
@@ -387,6 +393,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
     private const string ConversionOperationKind = "obj_conversion_creation";
     private const string GenerationTaskType = "text_to_model";
     private const string ConversionTaskType = "convert_model";
+    private static readonly TimeSpan PipelinePollDelay = TimeSpan.FromSeconds(2);
 
     private readonly Tripo.Bridge.IHostSidecarConnector _connector;
     private readonly TripoPanelRecoveryStore? _recoveryStore;
@@ -929,7 +936,9 @@ public sealed class TripoPanelSession : IAsyncDisposable
     public PreparedObjImport PrepareImport(
         string name,
         string importMode,
-        bool applyMaterials)
+        bool applyMaterials,
+        string placementMode = "origin",
+        bool associateLevel = false)
     {
         EnterSynchronousMutation();
         try
@@ -937,6 +946,14 @@ public sealed class TripoPanelSession : IAsyncDisposable
             EnsureNoStaleRecovery();
             ValidateName(name);
             string normalizedMode = ValidateImportMode(importMode);
+            string normalizedPlacement = ValidatePlacementMode(placementMode);
+            if (associateLevel &&
+                !string.Equals(normalizedMode, "family", StringComparison.Ordinal) &&
+                !string.Equals(normalizedMode, "native", StringComparison.Ordinal))
+            {
+                associateLevel = false;
+            }
+
             TripoPanelState state = State;
             string conversionTaskId = RequireSuccessfulTask(
                 state.ConversionStatus,
@@ -961,7 +978,9 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 normalizedMode,
                 applyMaterials,
                 context.DocumentTitle,
-                context.Host);
+                context.Host,
+                normalizedPlacement,
+                associateLevel);
             UpdateState(current => current with
             {
                 PreparedImport = prepared,
@@ -1011,7 +1030,9 @@ public sealed class TripoPanelSession : IAsyncDisposable
                                 prepared.DocumentSessionId,
                                 prepared.OperationId,
                                 prepared.ImportMode,
-                                prepared.ApplyMaterials),
+                                prepared.ApplyMaterials,
+                                prepared.PlacementMode,
+                                prepared.AssociateLevel),
                             token)
                         .ConfigureAwait(false);
                 UpdateState(state => state with
@@ -1031,6 +1052,234 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 });
             },
             cancellationToken);
+
+    /// <summary>
+    /// Runs generate → poll → convert → poll → import as one UI pipeline.
+    /// Does not hold the operation gate across stages; each stage uses existing APIs.
+    /// </summary>
+    public async Task RunCreatePipelineAsync(
+        string prompt,
+        int faceLimit,
+        bool withMaterials,
+        string objectName,
+        string importMode,
+        bool applyMaterials,
+        bool userConfirmedExternalCost,
+        string placementMode = "origin",
+        bool associateLevel = false,
+        IProgress<TripoPipelineProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (!userConfirmedExternalCost)
+        {
+            throw new InvalidOperationException(
+                "Create was not started because external cost was not confirmed.");
+        }
+
+        ArgumentNullException.ThrowIfNull(prompt);
+        ArgumentNullException.ThrowIfNull(objectName);
+
+        static void Report(
+            IProgress<TripoPipelineProgress>? sink,
+            string label,
+            int? percent) =>
+            sink?.Report(new TripoPipelineProgress(label, percent));
+
+        TripoPanelState state = State;
+        if (!state.HasSuccessfulGeneration)
+        {
+            if (state.PreparedGeneration is null)
+            {
+                if (state.HasWorkflowState)
+                {
+                    throw new InvalidOperationException(
+                        "Clear the current workflow with New before starting Create.");
+                }
+
+                PrepareGeneration(prompt, faceLimit, withMaterials);
+            }
+
+            state = State;
+            if (state.CanDispatchPreparedGeneration)
+            {
+                Report(progress, "Generating…", 0);
+                await DispatchPreparedGenerationAsync(
+                        userConfirmedExternalCost: true,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            await PollGenerationUntilTerminalAsync(progress, cancellationToken)
+                .ConfigureAwait(false);
+            if (!State.HasSuccessfulGeneration)
+            {
+                throw new InvalidOperationException(
+                    State.GenerationStatus?.ErrorMessage ??
+                    "Generation did not succeed.");
+            }
+        }
+
+        state = State;
+        if (!state.HasSuccessfulConversion)
+        {
+            if (state.PreparedConversion is null)
+            {
+                bool materials =
+                    state.PreparedGeneration?.WithMaterials ?? withMaterials;
+                int limit =
+                    state.PreparedGeneration?.FaceLimit ?? faceLimit;
+                PrepareConversion(limit, materials);
+            }
+
+            state = State;
+            if (state.CanDispatchPreparedConversion)
+            {
+                Report(progress, "Converting…", 34);
+                await DispatchPreparedConversionAsync(
+                        userConfirmedExternalCost: true,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            await PollConversionUntilTerminalAsync(progress, cancellationToken)
+                .ConfigureAwait(false);
+            if (!State.HasSuccessfulConversion)
+            {
+                throw new InvalidOperationException(
+                    State.ConversionStatus?.ErrorMessage ??
+                    "Conversion did not succeed.");
+            }
+        }
+
+        state = State;
+        if (state.PreparedImport is null ||
+            state.HasConfirmedImportReceipt)
+        {
+            PrepareImport(
+                objectName,
+                importMode,
+                applyMaterials,
+                placementMode,
+                associateLevel);
+        }
+
+        Report(
+            progress,
+            string.Equals(placementMode, "pick", StringComparison.Ordinal)
+                ? "Importing… (you may be asked to pick a point)"
+                : "Importing…",
+            70);
+        await ImportPreparedAsync(cancellationToken).ConfigureAwait(false);
+        Report(progress, "Done", 100);
+    }
+
+    private async Task PollGenerationUntilTerminalAsync(
+        IProgress<TripoPipelineProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await RefreshGenerationStatusAsync(cancellationToken)
+                .ConfigureAwait(false);
+            TripoPanelState state = State;
+            Tripo.Bridge.HostControlTaskStatusReceipt? task =
+                state.GenerationStatus;
+            if (task is not null &&
+                state.GenerationStatusMatchesDurableTask)
+            {
+                if (task.Status is "queued" or "running")
+                {
+                    int mapped = MapStageProgress(task.Progress, 0, 33);
+                    progress?.Report(
+                        new TripoPipelineProgress("Generating…", mapped));
+                    await Task.Delay(PipelinePollDelay, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
+                return;
+            }
+
+            if (state.DurableGenerationTaskId is null &&
+                state.GenerationRetryAllowed)
+            {
+                throw new InvalidOperationException(
+                    "Generation dispatch needs a same-UUID retry. Use Advanced.");
+            }
+
+            await Task.Delay(PipelinePollDelay, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task PollConversionUntilTerminalAsync(
+        IProgress<TripoPipelineProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await RefreshConversionStatusAsync(cancellationToken)
+                .ConfigureAwait(false);
+            TripoPanelState state = State;
+            Tripo.Bridge.HostControlTaskStatusReceipt? task =
+                state.ConversionStatus;
+            if (task is not null &&
+                state.ConversionStatusMatchesDurableTask)
+            {
+                if (task.Status is "queued" or "running")
+                {
+                    int mapped = MapStageProgress(task.Progress, 34, 66);
+                    progress?.Report(
+                        new TripoPipelineProgress("Converting…", mapped));
+                    await Task.Delay(PipelinePollDelay, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
+                return;
+            }
+
+            if (state.DurableConversionTaskId is null &&
+                state.ConversionRetryAllowed)
+            {
+                throw new InvalidOperationException(
+                    "Conversion dispatch needs a same-UUID retry. Use Advanced.");
+            }
+
+            await Task.Delay(PipelinePollDelay, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static int MapStageProgress(
+        int? providerProgress,
+        int stageStart,
+        int stageEnd)
+    {
+        int span = Math.Max(1, stageEnd - stageStart);
+        int pct = providerProgress is >= 0 and <= 100
+            ? providerProgress.Value
+            : 0;
+        return stageStart + (pct * span / 100);
+    }
+
+    private static string ValidatePlacementMode(string placementMode)
+    {
+        if (string.IsNullOrWhiteSpace(placementMode))
+        {
+            return "origin";
+        }
+
+        string normalized = placementMode.Trim().ToLowerInvariant();
+        return normalized is "origin" or "pick"
+            ? normalized
+            : throw new ArgumentException(
+                "Placement mode must be origin or pick.",
+                nameof(placementMode));
+    }
 
     public void ResetWorkflow()
     {

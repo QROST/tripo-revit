@@ -255,7 +255,9 @@ public sealed record HostControlImportObjTaskRequest(
     string DocumentSessionId,
     string OperationId,
     string ImportMode,
-    bool ApplyMaterials);
+    bool ApplyMaterials,
+    string PlacementMode = "origin",
+    bool AssociateLevel = false);
 
 public sealed record HostControlObjTaskImportReceipt(
     string OperationId,

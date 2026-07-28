@@ -95,7 +95,9 @@ public sealed record ImportMeshRequest(
     string Name,
     string IdempotencyKey,
     string ImportMode,
-    bool ApplyMaterials);
+    bool ApplyMaterials,
+    string PlacementMode = "origin",
+    bool AssociateLevel = false);
 
 public sealed record HostImportReceipt(
     string Host,
@@ -109,7 +111,8 @@ public sealed record HostImportReceipt(
     string ImportMode,
     int MaterialCount,
     int TextureCount,
-    string? SavedFamilyPath);
+    string? SavedFamilyPath,
+    string? PlacementNote = null);
 
 public interface IHostBridgeDispatcher
 {

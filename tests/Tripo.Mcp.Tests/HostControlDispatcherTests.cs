@@ -506,7 +506,9 @@ public sealed class HostControlDispatcherTests
             string operationId,
             string importMode,
             bool applyMaterials,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken,
+            string placementMode = "origin",
+            bool associateLevel = false) =>
             Task.FromResult(
                 new Tripo.Mcp.ObjTaskImportReceipt(
                     operationId,

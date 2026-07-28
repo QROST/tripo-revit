@@ -386,7 +386,9 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string operationId,
         string importMode,
         bool applyMaterials,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string placementMode = "origin",
+        bool associateLevel = false)
     {
         TripoV3Client.ValidateTaskId(conversionTaskId);
         string canonicalOperationId = ValidateImportArguments(
@@ -394,10 +396,16 @@ public sealed class TripoWorkflow : ITripoWorkflow
             documentSessionId,
             operationId);
         string requestedMode = NormalizeImportMode(importMode);
+        string normalizedPlacement = NormalizePlacementMode(placementMode);
         Tripo.Bridge.HostContextReceipt context =
             await RequireActiveDocumentAsync(documentSessionId, cancellationToken)
                 .ConfigureAwait(false);
         string resolvedMode = ResolveImportMode(requestedMode, context.Host);
+        if (associateLevel &&
+            !string.Equals(resolvedMode, "family", StringComparison.Ordinal))
+        {
+            associateLevel = false;
+        }
 
         (TripoTaskSnapshot conversionTask, Tripo.Bridge.StagedBundle bundle) =
             await StageSuccessfulObjTaskAsync(
@@ -425,7 +433,9 @@ public sealed class TripoWorkflow : ITripoWorkflow
             name,
             canonicalOperationId,
             resolvedMode,
-            applyMaterials);
+            applyMaterials,
+            normalizedPlacement,
+            associateLevel);
         Tripo.Bridge.HostImportReceipt hostReceipt =
             await _hostConnection.ImportMeshAsync(importRequest, cancellationToken)
                 .ConfigureAwait(false);
@@ -530,6 +540,24 @@ public sealed class TripoWorkflow : ITripoWorkflow
             throw new ArgumentException(
                 "importMode must be native, mesh, instance, or family.",
                 nameof(importMode));
+        }
+
+        return normalized;
+    }
+
+    private static string NormalizePlacementMode(string placementMode)
+    {
+        if (string.IsNullOrWhiteSpace(placementMode))
+        {
+            return "origin";
+        }
+
+        string normalized = placementMode.Trim().ToLowerInvariant();
+        if (normalized is not "origin" and not "pick")
+        {
+            throw new ArgumentException(
+                "placementMode must be origin or pick.",
+                nameof(placementMode));
         }
 
         return normalized;

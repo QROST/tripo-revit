@@ -2,7 +2,7 @@ namespace Tripo.Bridge;
 
 public static class BridgeConstants
 {
-    public const string ProtocolVersion = "2";
+    public const string ProtocolVersion = "3";
     public const int MaximumMessageBytes = 64 * 1024;
     public const long MaximumImageTransferBytes = 20_000_000;
     public const long MaximumArtifactBytes = 128L * 1024 * 1024;

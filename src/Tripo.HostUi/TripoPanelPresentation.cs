@@ -151,6 +151,18 @@ public sealed class TripoPanelPresentation
 
     public string ResetHelp { get; private init; } = string.Empty;
 
+    public bool PrimaryActionEnabled { get; private init; }
+
+    public string PrimaryActionText { get; private init; } = string.Empty;
+
+    public string PrimaryActionHelp { get; private init; } = string.Empty;
+
+    public string PipelineStageLabel { get; private init; } = string.Empty;
+
+    public bool PipelineProgressVisible { get; private init; }
+
+    public int? PipelineProgress { get; private init; }
+
     public bool PromptEnabled { get; private init; }
 
     public bool FaceLimitEnabled { get; private init; }
@@ -177,7 +189,9 @@ public sealed class TripoPanelPresentation
         bool conversionRefreshFailed = false,
         bool generationJournalUpdatedOnFailedRefresh = false,
         bool conversionJournalUpdatedOnFailedRefresh = false,
-        bool recoveryInspectionHadFailures = false)
+        bool recoveryInspectionHadFailures = false,
+        string? pipelineStageLabel = null,
+        int? pipelineProgressOverride = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(recovery);
@@ -226,6 +240,44 @@ public sealed class TripoPanelPresentation
             state.DurableConversionTaskId;
         (string resultStatus, TripoPanelNoticeKind resultKind) =
             BuildResult(state, currentAction, host);
+        (string pipelineLabel, int? pipelineProgress, bool pipelineVisible) =
+            BuildPipelineProgress(
+                state,
+                currentAction,
+                pipelineStageLabel,
+                pipelineProgressOverride,
+                generationRefreshFailed,
+                conversionRefreshFailed);
+
+        // Compute stage enablement first so primary action can reuse it.
+        bool generateEnabled =
+            ready &&
+            !recoveryBlocked &&
+            state.CredentialStatus?.HasApiKey == true &&
+            faceLimitValid &&
+            ((!generationPrepared && promptValid) ||
+             (generationPrepared &&
+              state.CanDispatchPreparedGeneration &&
+              (!state.GenerationDispatchAttempted ||
+               state.GenerationRetryAllowed)));
+        bool convertEnabled =
+            ready &&
+            !recoveryBlocked &&
+            state.CredentialStatus?.HasApiKey == true &&
+            faceLimitValid &&
+            generationSucceeded &&
+            (!conversionPrepared ||
+             (state.CanDispatchPreparedConversion &&
+              (!state.ConversionDispatchAttempted ||
+               state.ConversionRetryAllowed)));
+        bool importEnabled =
+            ready &&
+            !recoveryBlocked &&
+            state.CredentialStatus?.HasApiKey == true &&
+            conversionSucceeded &&
+            (canPrepareImport
+                ? objectNameValid
+                : state.CanDispatchPreparedImport);
 
         return new TripoPanelPresentation
         {
@@ -371,16 +423,7 @@ public sealed class TripoPanelPresentation
                 recovery,
                 reviewedCurrentRecovery,
                 recoveryInspectionHadFailures),
-            GenerateEnabled =
-                ready &&
-                !recoveryBlocked &&
-                state.CredentialStatus?.HasApiKey == true &&
-                faceLimitValid &&
-                ((!generationPrepared && promptValid) ||
-                 (generationPrepared &&
-                  state.CanDispatchPreparedGeneration &&
-                  (!state.GenerationDispatchAttempted ||
-                   state.GenerationRetryAllowed))),
+            GenerateEnabled = generateEnabled,
             GenerateText = !generationPrepared
                 ? "Generate"
                 : state.GenerationRetryAllowed
@@ -409,16 +452,7 @@ public sealed class TripoPanelPresentation
                 state.GenerationDispatchAttempted,
                 "generation",
                 CanInspectAmbiguousGenerationLocally(state)),
-            ConvertEnabled =
-                ready &&
-                !recoveryBlocked &&
-                state.CredentialStatus?.HasApiKey == true &&
-                faceLimitValid &&
-                generationSucceeded &&
-                (!conversionPrepared ||
-                 (state.CanDispatchPreparedConversion &&
-                  (!state.ConversionDispatchAttempted ||
-                   state.ConversionRetryAllowed))),
+            ConvertEnabled = convertEnabled,
             ConvertText = !conversionPrepared
                 ? "Convert to OBJ"
                 : state.ConversionRetryAllowed
@@ -447,14 +481,7 @@ public sealed class TripoPanelPresentation
                 state.ConversionDispatchAttempted,
                 "conversion",
                 CanInspectAmbiguousConversionLocally(state)),
-            ImportEnabled =
-                ready &&
-                !recoveryBlocked &&
-                state.CredentialStatus?.HasApiKey == true &&
-                conversionSucceeded &&
-                (canPrepareImport
-                    ? objectNameValid
-                    : state.CanDispatchPreparedImport),
+            ImportEnabled = importEnabled,
             ImportText = canPrepareImport
                 ? importReceiptConfirmed
                     ? $"Import again into {importTarget}"
@@ -484,6 +511,25 @@ public sealed class TripoPanelPresentation
                 uiBusy,
                 recoveryBlocked,
                 remoteTaskNeedsReview),
+            PrimaryActionEnabled =
+                generateEnabled || convertEnabled || importEnabled,
+            PrimaryActionText = importReceiptConfirmed
+                ? "Create again in Revit"
+                : "Create in Revit",
+            PrimaryActionHelp = BuildPrimaryActionHelp(
+                state,
+                uiBusy,
+                recoveryBlocked,
+                promptValid,
+                faceLimitValid,
+                objectNameValid,
+                generateEnabled,
+                convertEnabled,
+                importEnabled,
+                host),
+            PipelineStageLabel = pipelineLabel,
+            PipelineProgressVisible = pipelineVisible,
+            PipelineProgress = pipelineProgress,
             PromptEnabled = ready && !generationPrepared,
             FaceLimitEnabled = ready && !generationPrepared,
             WithMaterialsEnabled = ready && !generationPrepared,
@@ -747,6 +793,183 @@ public sealed class TripoPanelPresentation
 
         return "Review the request summary and durable UUID before a request " +
                "that may consume Tripo credits.";
+    }
+
+    private static string BuildPrimaryActionHelp(
+        TripoPanelState state,
+        bool uiBusy,
+        bool recoveryBlocked,
+        bool promptValid,
+        bool faceLimitValid,
+        bool objectNameValid,
+        bool generateEnabled,
+        bool convertEnabled,
+        bool importEnabled,
+        string host)
+    {
+        if (uiBusy)
+        {
+            return "Wait for the current panel operation to finish.";
+        }
+
+        if (!state.Connected)
+        {
+            return $"Connect to the active {host} document first.";
+        }
+
+        if (recoveryBlocked)
+        {
+            return "Inspect and reconcile the recovered operation IDs first.";
+        }
+
+        if (state.CredentialStatus?.HasApiKey != true)
+        {
+            return "Configure a Tripo API key in Settings first.";
+        }
+
+        if (generateEnabled)
+        {
+            if (!promptValid)
+            {
+                return "Enter a valid model description.";
+            }
+
+            if (!faceLimitValid)
+            {
+                return "Enter a face limit from 500 through 200000 in Settings.";
+            }
+
+            return "Generate, convert, and import into the active document. " +
+                   "This may consume Tripo credits.";
+        }
+
+        if (convertEnabled)
+        {
+            return "Continue the pipeline: convert the generated model to OBJ " +
+                   "and import it. This may consume Tripo credits.";
+        }
+
+        if (importEnabled)
+        {
+            if (!objectNameValid)
+            {
+                return $"Enter a valid {host} object name in Settings.";
+            }
+
+            return $"Import the prepared OBJ into the active {host} document.";
+        }
+
+        if (state.HasNonTerminalRemoteTask)
+        {
+            return "A remote task is still running. Wait for Create to finish, " +
+                   "or use Advanced refresh.";
+        }
+
+        return "Finish or clear the current workflow before creating again.";
+    }
+
+    private static (
+        string Label,
+        int? Progress,
+        bool Visible) BuildPipelineProgress(
+        TripoPanelState state,
+        string? currentAction,
+        string? pipelineStageLabel,
+        int? pipelineProgressOverride,
+        bool generationRefreshFailed,
+        bool conversionRefreshFailed)
+    {
+        if (!string.IsNullOrWhiteSpace(pipelineStageLabel))
+        {
+            return (
+                pipelineStageLabel.Trim(),
+                pipelineProgressOverride,
+                true);
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentAction))
+        {
+            string action = currentAction.Trim();
+            if (action.Contains("Generat", StringComparison.OrdinalIgnoreCase))
+            {
+                int? mapped = MapVisibleProgress(
+                    VisibleTaskProgress(
+                        state.GenerationStatus,
+                        state.DurableGenerationTaskId,
+                        generationRefreshFailed),
+                    0,
+                    33);
+                return ("Generating…", mapped ?? 0, true);
+            }
+
+            if (action.Contains("Convert", StringComparison.OrdinalIgnoreCase))
+            {
+                int? mapped = MapVisibleProgress(
+                    VisibleTaskProgress(
+                        state.ConversionStatus,
+                        state.DurableConversionTaskId,
+                        conversionRefreshFailed),
+                    34,
+                    66);
+                return ("Converting…", mapped ?? 34, true);
+            }
+
+            if (action.Contains("Import", StringComparison.OrdinalIgnoreCase) ||
+                action.Contains("Place", StringComparison.OrdinalIgnoreCase))
+            {
+                return (action, 85, true);
+            }
+
+            return (action, null, true);
+        }
+
+        if (state.HasSuccessfulConversion &&
+            state.HasConfirmedImportReceipt)
+        {
+            return ("Done", 100, false);
+        }
+
+        if (state.HasDurableConversionTask &&
+            !state.HasSuccessfulConversion &&
+            VisibleTaskProgress(
+                state.ConversionStatus,
+                state.DurableConversionTaskId,
+                conversionRefreshFailed) is int convertPct)
+        {
+            return (
+                "Converting…",
+                MapVisibleProgress(convertPct, 34, 66),
+                true);
+        }
+
+        if (state.HasDurableGenerationTask &&
+            !state.HasSuccessfulGeneration &&
+            VisibleTaskProgress(
+                state.GenerationStatus,
+                state.DurableGenerationTaskId,
+                generationRefreshFailed) is int genPct)
+        {
+            return (
+                "Generating…",
+                MapVisibleProgress(genPct, 0, 33),
+                true);
+        }
+
+        return (string.Empty, null, false);
+    }
+
+    private static int? MapVisibleProgress(
+        int? providerProgress,
+        int stageStart,
+        int stageEnd)
+    {
+        if (providerProgress is null)
+        {
+            return null;
+        }
+
+        int span = Math.Max(1, stageEnd - stageStart);
+        return stageStart + (providerProgress.Value * span / 100);
     }
 
     private static string BuildConvertHelp(
@@ -1513,6 +1736,11 @@ public sealed class TripoPanelPresentation
         if (!string.IsNullOrWhiteSpace(receipt.SavedFamilyPath))
         {
             lines.Add($"Saved family: {receipt.SavedFamilyPath}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(receipt.PlacementNote))
+        {
+            lines.Add($"Placement: {BoundText(receipt.PlacementNote)}");
         }
 
         return string.Join(Environment.NewLine, lines);

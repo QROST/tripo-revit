@@ -319,7 +319,9 @@ internal sealed class HostControlDispatcher :
                     request.OperationId,
                     request.ImportMode,
                     request.ApplyMaterials,
-                    cancellationToken)
+                    cancellationToken,
+                    request.PlacementMode,
+                    request.AssociateLevel)
                 .ConfigureAwait(false);
         return new Tripo.Bridge.HostControlObjTaskImportReceipt(
             receipt.OperationId,

@@ -1470,6 +1470,48 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
+    public async Task CreatePipelineRunsGenerateConvertAndImportWithoutManualRefresh()
+    {
+        FakeHostControlClient client = new()
+        {
+            Host = "revit",
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+
+        List<string> stages = [];
+        Progress<Tripo.HostUi.TripoPipelineProgress> progress = new(
+            update => stages.Add(update.StageLabel));
+
+        await session.RunCreatePipelineAsync(
+            "a pavilion",
+            10_000,
+            withMaterials: true,
+            "Pavilion",
+            "family",
+            applyMaterials: true,
+            userConfirmedExternalCost: true,
+            placementMode: "origin",
+            associateLevel: true,
+            progress);
+
+        Assert.Equal(1, client.CreateTextCalls);
+        Assert.Equal(1, client.CreateConversionCalls);
+        Assert.Equal(1, client.ImportCalls);
+        Assert.True(session.State.HasSuccessfulGeneration);
+        Assert.True(session.State.HasSuccessfulConversion);
+        Assert.True(session.State.HasConfirmedImportReceipt);
+        Assert.Equal(
+            "origin",
+            session.State.PreparedImport?.PlacementMode);
+        Assert.True(session.State.PreparedImport?.AssociateLevel);
+        Assert.Contains(stages, stage => stage.Contains("Generat"));
+        Assert.Contains(stages, stage => stage.Contains("Convert"));
+        Assert.Contains(stages, stage => stage.Contains("Import") || stage == "Done");
+    }
+
+    [Fact]
     public async Task CompletedConversionImportsIntoTwoDocumentsWithFreshUuids()
     {
         FakeHostControlClient client = new()

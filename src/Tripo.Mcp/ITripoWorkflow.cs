@@ -55,7 +55,9 @@ public interface ITripoWorkflow
         string operationId,
         string importMode,
         bool applyMaterials,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        string placementMode = "origin",
+        bool associateLevel = false);
 
     Task<ObjTaskStageReceipt> StageObjTaskAsync(
         string conversionTaskId,

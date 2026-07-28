@@ -133,7 +133,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                 application => isFamily
                     ? ImportFamilyInApiContext(application, request, prepared)
                     : ImportMeshInApiContext(
-                        GetActiveDocument(application),
+                        application,
                         request,
                         prepared),
                 cancellationToken)
@@ -141,10 +141,11 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
     }
 
     private Tripo.Bridge.HostImportReceipt ImportMeshInApiContext(
-        Document document,
+        UIApplication application,
         Tripo.Bridge.ImportMeshRequest request,
         Tripo.Bridge.PreparedMesh prepared)
     {
+        Document document = GetActiveDocument(application);
         EnsureWritableMatchingDocument(document, request.DocumentSessionId);
         string fingerprint = CreateRequestFingerprint(request);
         string expectedDataId = request.IdempotencyKey + ":" + fingerprint;
@@ -174,7 +175,8 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                 "already_exists",
                 0,
                 0,
-                null);
+                null,
+                "Already present; placement unchanged");
         }
 
         // Cross-mode idempotency: a prior replay of this key may have landed in
@@ -257,6 +259,13 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             throw;
         }
 
+        string? placementNote = ApplyPlacementAfterCommit(
+            application,
+            document,
+            directShape.Id,
+            request,
+            isFamilyInstance: false);
+
         return CreateReceipt(
             request,
             directShape.UniqueId,
@@ -264,7 +273,8 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             "committed",
             materialCount,
             textureCount,
-            null);
+            null,
+            placementNote);
     }
 
     private Tripo.Bridge.HostImportReceipt ImportFamilyInApiContext(
@@ -311,7 +321,8 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                 "already_exists",
                 storedEntity.Get<int>(MaterialCountField),
                 storedEntity.Get<int>(TextureCountField),
-                persistedPath);
+                persistedPath,
+                "Already present; placement unchanged");
         }
 
         // Cross-mode idempotency: a prior replay of this key may have landed in
@@ -359,6 +370,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
         try
         {
             return LoadFamilyIntoHost(
+                application,
                 document,
                 schema,
                 request,
@@ -472,6 +484,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
     }
 
     private static Tripo.Bridge.HostImportReceipt LoadFamilyIntoHost(
+        UIApplication application,
         Document document,
         Schema schema,
         Tripo.Bridge.ImportMeshRequest request,
@@ -501,6 +514,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
         }
 
         string createdUniqueId;
+        ElementId createdId;
         try
         {
             Family family;
@@ -574,6 +588,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             }
 
             createdUniqueId = instance.UniqueId;
+            createdId = instance.Id;
         }
         catch (Exception exception)
         {
@@ -592,6 +607,13 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             throw;
         }
 
+        string? placementNote = ApplyPlacementAfterCommit(
+            application,
+            document,
+            createdId,
+            request,
+            isFamilyInstance: true);
+
         return CreateReceipt(
             request,
             createdUniqueId,
@@ -599,7 +621,8 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             "committed",
             materialCount,
             textureCount,
-            rfaPath);
+            rfaPath,
+            placementNote);
     }
 
     private static IList<GeometryObject> BuildGeometry(
@@ -1168,7 +1191,8 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
         string transactionStatus,
         int materialCount,
         int textureCount,
-        string? savedFamilyPath) =>
+        string? savedFamilyPath,
+        string? placementNote = null) =>
         new(
             "revit",
             request.DocumentSessionId,
@@ -1181,7 +1205,137 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             request.ImportMode,
             materialCount,
             textureCount,
-            savedFamilyPath);
+            savedFamilyPath,
+            placementNote);
+
+    private static string? ApplyPlacementAfterCommit(
+        UIApplication application,
+        Document document,
+        ElementId elementId,
+        Tripo.Bridge.ImportMeshRequest request,
+        bool isFamilyInstance)
+    {
+        bool wantsPick = string.Equals(
+            request.PlacementMode,
+            "pick",
+            StringComparison.OrdinalIgnoreCase);
+        bool wantsLevel = request.AssociateLevel && isFamilyInstance;
+        if (!wantsPick && !wantsLevel)
+        {
+            return null;
+        }
+
+        string? note = null;
+        XYZ target = XYZ.Zero;
+        if (wantsPick)
+        {
+            UIDocument? uiDocument = application.ActiveUIDocument;
+            if (uiDocument is null ||
+                !ReferenceEquals(uiDocument.Document, document))
+            {
+                note = "Pick unavailable; left at project origin";
+            }
+            else
+            {
+                try
+                {
+                    target = uiDocument.Selection.PickPoint(
+                        "Click to place the Tripo model (Esc keeps origin)");
+                }
+                catch (Autodesk.Revit.Exceptions.OperationCanceledException)
+                {
+                    note = "Pick cancelled; left at project origin";
+                    target = XYZ.Zero;
+                }
+            }
+        }
+
+        using Transaction placementTransaction =
+            new(document, "Place Tripo model");
+        FailureHandlingOptions failureOptions = placementTransaction
+            .GetFailureHandlingOptions()
+            .SetFailuresPreprocessor(new RevitRollbackFailuresPreprocessor())
+            .SetClearAfterRollback(true);
+        placementTransaction.SetFailureHandlingOptions(failureOptions);
+        if (placementTransaction.Start() != TransactionStatus.Started)
+        {
+            return note ?? "Placement transaction could not start";
+        }
+
+        try
+        {
+            if (!target.IsAlmostEqualTo(XYZ.Zero))
+            {
+                ElementTransformUtils.MoveElement(document, elementId, target);
+                note ??= "Placed at picked point";
+            }
+
+            if (wantsLevel)
+            {
+                Element element = document.GetElement(elementId);
+                if (element is not null &&
+                    TryAssociateNearestLevel(document, element, target))
+                {
+                    note = string.IsNullOrWhiteSpace(note)
+                        ? "Associated nearest level"
+                        : note + "; associated nearest level";
+                }
+            }
+
+            if (placementTransaction.Commit() != TransactionStatus.Committed)
+            {
+                return "Placement transaction did not commit; model left at origin";
+            }
+        }
+        catch
+        {
+            if (placementTransaction.GetStatus() == TransactionStatus.Started)
+            {
+                placementTransaction.RollBack();
+            }
+
+            throw;
+        }
+
+        return note;
+    }
+
+    private static bool TryAssociateNearestLevel(
+        Document document,
+        Element element,
+        XYZ point)
+    {
+        Level? nearest = null;
+        double bestDistance = double.MaxValue;
+        foreach (Level level in new FilteredElementCollector(document)
+                     .OfClass(typeof(Level))
+                     .Cast<Level>())
+        {
+            double distance = Math.Abs(level.Elevation - point.Z);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                nearest = level;
+            }
+        }
+
+        if (nearest is null)
+        {
+            return false;
+        }
+
+        Parameter? levelParameter =
+            element.get_Parameter(BuiltInParameter.FAMILY_LEVEL_PARAM) ??
+            element.get_Parameter(BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM) ??
+            element.get_Parameter(BuiltInParameter.SCHEDULE_LEVEL_PARAM);
+        if (levelParameter is null || levelParameter.IsReadOnly)
+        {
+            return false;
+        }
+
+        levelParameter.Set(nearest.Id);
+        return true;
+    }
 
     private static string CreateRequestFingerprint(
         Tripo.Bridge.ImportMeshRequest request)
@@ -1189,9 +1343,15 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
         // Host-side import identity is content, not session: the session is
         // blanked so a cross-restart replay (same key, new session) recovers
         // instead of conflicting. The active-session check enforces session
-        // correctness separately.
+        // correctness separately. Placement preferences are UX-only and must
+        // not change the content fingerprint.
         byte[] canonical = JsonSerializer.SerializeToUtf8Bytes(
-            request with { DocumentSessionId = string.Empty },
+            request with
+            {
+                DocumentSessionId = string.Empty,
+                PlacementMode = "origin",
+                AssociateLevel = false,
+            },
             Tripo.Bridge.BridgeJson.Options);
         return Convert.ToHexString(SHA256.HashData(canonical)).ToLowerInvariant();
     }

@@ -297,10 +297,14 @@ a paid call.
 ### Revit
 
 - The add-in registers **Add-Ins → Tripo → Tripo 3D** and opens one modeless WPF
-  window. The window exposes the same text workflow fields and durable IDs as
-  Rhino; it does not retain `Document` or `UIApplication` objects. Closing a
-  workflow-bearing window hides it for the current Revit process so reopening
-  preserves the in-memory operation identities.
+  window. The primary surface is prompt + **Create in Revit** (auto
+  generate→poll→convert→poll→import). Settings and Advanced foldouts expose the
+  same stage fields, placement options, credentials, recovery, and durable IDs
+  as the staged MCP/journal APIs; the window does not retain `Document` or
+  `UIApplication` objects. Closing a workflow-bearing window hides it for the
+  current Revit process so reopening preserves the in-memory operation
+  identities.
+- Host UI is a pipeline facade over `TripoPanelSession`; MCP remains staged.
 - All document reads and writes run inside an `ExternalEvent`.
 - Requests use a bounded FIFO queue instead of a global mutable slot.
 - The active document is checked again inside the API context.
@@ -314,7 +318,10 @@ a paid call.
   non-solid tessellated geometry and materials in its own transaction, is saved to
   `<data root>/families/<IdempotencyKey>.rfa`, then loaded into the host document
   (or reused by its derived name if an earlier attempt already loaded it) and placed
-  as one `FamilyInstance` in a second transaction.
+  as one `FamilyInstance` in a second transaction. Optional `placementMode=pick`
+  prompts for a point after commit; `associateLevel` sets the nearest level on
+  family instances. Placement preferences are excluded from the content
+  fingerprint.
 - Family-mode idempotency uses an Extensible Storage schema entity on the created
   `FamilyInstance` (idempotency key, request fingerprint, `MaterialCount`,
   `TextureCount`), so an `already_exists` receipt reports what the document actually

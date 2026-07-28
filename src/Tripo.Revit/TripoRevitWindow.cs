@@ -55,10 +55,23 @@ internal sealed class TripoRevitWindow : Window
         "Apply baked materials from the OBJ bundle",
         "Requires an MTL material library. The import receipt reports actual " +
         "material and texture counts; review a zero count.");
+    private readonly ComboBox _placementMode = new()
+    {
+        ItemsSource = PlacementModeOption.All,
+        SelectedIndex = 0,
+        MinWidth = 220,
+    };
+    private readonly CheckBox _associateLevel = WrappingCheckBox(
+        "Associate nearest level (family only)",
+        "After import, set the family instance level parameter to the nearest " +
+        "level by elevation. Ignored for DirectShape mesh imports.");
     private readonly TextBlock _documentStatus = StatusBlock();
     private readonly TextBox _documentSession = OperationStatusBox();
     private readonly TextBlock _credentialStatus = StatusBlock();
     private readonly TextBlock _resultStatus = StatusBlock();
+    private readonly TextBlock _pipelineStage = StatusBlock();
+    private readonly ProgressBar _pipelineProgress = WorkflowProgressBar();
+    private readonly TextBlock _categoryNote = StatusBlock();
     private readonly TextBlock _recoveryHeader = StatusBlock();
     private readonly TextBox _recoveryStatus = RecoveryStatusBox();
     private readonly TextBox _generationOperation = OperationStatusBox();
@@ -78,8 +91,11 @@ internal sealed class TripoRevitWindow : Window
     private readonly TextBlock _faceLimitValidation = ValidationBlock();
     private readonly TextBlock _objectNameValidation = ValidationBlock();
     private readonly TextBlock _importModeHelp = StatusBlock();
+    private readonly Expander _settingsExpander = new();
     private readonly Expander _recoveryExpander = new();
+    private readonly Expander _advancedExpander = new();
     private readonly Expander _detailsExpander = new();
+    private readonly Button _create = PrimaryActionButton("Create in Revit");
     private readonly Button _connect = ActionButton("Connect / Refresh");
     private readonly Button _apiKey = ActionButton("API key…");
     private readonly Button _clearApiKey =
@@ -95,7 +111,7 @@ internal sealed class TripoRevitWindow : Window
     private readonly Button _refreshConversion =
         ActionButton("Refresh conversion");
     private readonly Button _import = ActionButton("Import into Revit");
-    private readonly Button _reset = ActionButton("New workflow");
+    private readonly Button _reset = ActionButton("New");
     private readonly StackPanel _generationDiagnosticBlock;
     private readonly StackPanel _conversionDiagnosticBlock;
     private readonly StackPanel _importReceiptBlock;
@@ -107,6 +123,8 @@ internal sealed class TripoRevitWindow : Window
         Tripo.HostUi.TripoPanelRecoveryLoadResult.Empty.PresentationToken;
     private string? _displayedPreparedOperationId;
     private string? _currentAction;
+    private string? _pipelineStageLabel;
+    private int? _pipelineProgressValue;
     private bool _generationRefreshFailed;
     private bool _conversionRefreshFailed;
     private bool _generationJournalUpdatedOnFailedRefresh;
@@ -114,6 +132,7 @@ internal sealed class TripoRevitWindow : Window
     private bool _recoveryWasBlocked;
     private bool _allowClose;
     private bool _closing;
+    private CancellationTokenSource? _pipelineCancellation;
 
     internal Task SessionDisposal => _sessionDisposal;
 
@@ -135,10 +154,10 @@ internal sealed class TripoRevitWindow : Window
         MinWidth = 380;
         MinHeight = 300;
         Width = Math.Min(
-            600,
+            520,
             Math.Max(MinWidth, SystemParameters.WorkArea.Width - 48));
         Height = Math.Min(
-            760,
+            640,
             Math.Max(MinHeight, SystemParameters.WorkArea.Height - 48));
         ResizeMode = ResizeMode.CanResizeWithGrip;
         ShowInTaskbar = false;
@@ -149,12 +168,14 @@ internal sealed class TripoRevitWindow : Window
         TextOptions.SetTextFormattingMode(
             this,
             TextFormattingMode.Display);
+        ApplyUserSettings(TripoPanelUserSettings.Load());
         Content = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Content = BuildContent(),
         };
+        _create.Click += OnCreate;
         _connect.Click += OnConnect;
         _apiKey.Click += OnApiKey;
         _clearApiKey.Click += OnClearApiKey;
@@ -170,14 +191,24 @@ internal sealed class TripoRevitWindow : Window
         _faceLimit.TextChanged += OnFormInputChanged;
         _name.TextChanged += OnFormInputChanged;
         _importMode.SelectionChanged += OnImportModeChanged;
+        _placementMode.SelectionChanged += OnPlacementModeChanged;
+        _withMaterials.Checked += OnSettingsChanged;
+        _withMaterials.Unchecked += OnSettingsChanged;
+        _applyMaterials.Checked += OnSettingsChanged;
+        _applyMaterials.Unchecked += OnSettingsChanged;
+        _associateLevel.Checked += OnSettingsChanged;
+        _associateLevel.Unchecked += OnSettingsChanged;
         Loaded += OnLoaded;
         Closing += OnClosing;
         Closed += OnClosed;
         AutomationProperties.SetName(
             this,
-            "Tripo 3D generation workflow for Revit");
+            "Tripo 3D for Revit");
         AutomationProperties.SetLiveSetting(
             _resultStatus,
+            AutomationLiveSetting.Polite);
+        AutomationProperties.SetLiveSetting(
+            _pipelineStage,
             AutomationLiveSetting.Polite);
         AutomationProperties.SetLiveSetting(
             _recoveryHeader,
@@ -192,6 +223,7 @@ internal sealed class TripoRevitWindow : Window
             _importStatus,
             AutomationLiveSetting.Polite);
         UpdateImportModeHelp();
+        UpdatePlacementModeHelp();
         UpdateControls(_session.State);
     }
 
@@ -207,35 +239,65 @@ internal sealed class TripoRevitWindow : Window
         {
             Margin = new Thickness(16),
         };
-        StackPanel headerContent = new();
-        headerContent.Children.Add(new TextBlock
+
+        panel.Children.Add(new TextBlock
         {
             FontSize = 20,
             FontWeight = FontWeights.SemiBold,
             Text = "Tripo 3D for Revit",
         });
-        headerContent.Children.Add(new TextBlock
+        panel.Children.Add(new TextBlock
         {
             Margin = new Thickness(0, 2, 0, 8),
-            Text =
-                "Generate, convert, and import with durable operation IDs.",
+            Text = "Text to 3D in the active project.",
             TextWrapping = TextWrapping.Wrap,
         });
-        headerContent.Children.Add(_documentStatus);
-        headerContent.Children.Add(_credentialStatus);
+        panel.Children.Add(_documentStatus);
         _resultStatus.FontWeight = FontWeights.SemiBold;
-        headerContent.Children.Add(_resultStatus);
-        headerContent.Children.Add(
-            ActionRow(_connect, _apiKey, _clearApiKey));
-        panel.Children.Add(new Border
-        {
-            Background = SystemColors.ControlLightBrush,
-            BorderBrush = SystemColors.ActiveBorderBrush,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(12),
-            Child = headerContent,
-        });
+        panel.Children.Add(_resultStatus);
+
+        _prompt.MinHeight = 96;
+        panel.Children.Add(FieldBlock("Describe the model", _prompt));
+        panel.Children.Add(_promptValidation);
+
+        _create.Margin = new Thickness(0, 8, 0, 4);
+        _create.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _create.MinHeight = 40;
+        _create.FontWeight = FontWeights.SemiBold;
+        panel.Children.Add(_create);
+
+        _pipelineStage.FontWeight = FontWeights.SemiBold;
+        panel.Children.Add(_pipelineStage);
+        panel.Children.Add(_pipelineProgress);
+        panel.Children.Add(ActionRow(_reset));
+
+        _categoryNote.Text =
+            "Category: Generic Models · Format: OBJ";
+        _categoryNote.Opacity = 0.75;
+
+        StackPanel settingsContent = new();
+        settingsContent.Children.Add(
+            FieldBlock("Face limit (500–200,000)", _faceLimit));
+        settingsContent.Children.Add(_faceLimitValidation);
+        settingsContent.Children.Add(_withMaterials);
+        settingsContent.Children.Add(
+            FieldBlock("Revit object name", _name));
+        settingsContent.Children.Add(_objectNameValidation);
+        settingsContent.Children.Add(
+            FieldBlock("Revit import type", _importMode));
+        settingsContent.Children.Add(_importModeHelp);
+        settingsContent.Children.Add(_applyMaterials);
+        settingsContent.Children.Add(
+            FieldBlock("Placement", _placementMode));
+        settingsContent.Children.Add(_associateLevel);
+        settingsContent.Children.Add(_categoryNote);
+        settingsContent.Children.Add(_credentialStatus);
+        settingsContent.Children.Add(
+            ActionRow(_apiKey, _clearApiKey));
+        _settingsExpander.Header = "Settings";
+        _settingsExpander.Margin = new Thickness(0, 12, 0, 0);
+        _settingsExpander.Content = settingsContent;
+        panel.Children.Add(_settingsExpander);
 
         StackPanel recoveryContent = new();
         recoveryContent.Children.Add(
@@ -243,43 +305,27 @@ internal sealed class TripoRevitWindow : Window
         recoveryContent.Children.Add(
             ActionRow(_checkRecovery, _acknowledgeRecovery));
         _recoveryExpander.Header = _recoveryHeader;
-        _recoveryExpander.Margin = new Thickness(0, 12, 0, 0);
+        _recoveryExpander.Margin = new Thickness(0, 8, 0, 0);
         _recoveryExpander.Content = recoveryContent;
         panel.Children.Add(_recoveryExpander);
 
         _generationTask.FontWeight = FontWeights.SemiBold;
-        panel.Children.Add(Section(
-            "1 · Generate model",
-            FieldBlock("Describe the model", _prompt),
-            _promptValidation,
-            FieldBlock("Face limit (500–200,000)", _faceLimit),
-            _faceLimitValidation,
-            _withMaterials,
+        _conversionTask.FontWeight = FontWeights.SemiBold;
+        _importStatus.FontWeight = FontWeights.SemiBold;
+        StackPanel advancedContent = new();
+        advancedContent.Children.Add(ActionRow(_connect));
+        advancedContent.Children.Add(Section(
+            "Generate",
             _generationTask,
             _generationProgress,
             ActionRow(_generate, _refreshGeneration)));
-
-        _conversionTask.FontWeight = FontWeights.SemiBold;
-        panel.Children.Add(Section(
-            "2 · Convert to OBJ",
-            new TextBlock
-            {
-                Text =
-                    "Conversion is a separate Tripo task and may consume credits.",
-                TextWrapping = TextWrapping.Wrap,
-            },
+        advancedContent.Children.Add(Section(
+            "Convert to OBJ",
             _conversionTask,
             _conversionProgress,
             ActionRow(_convert, _refreshConversion)));
-
-        _importStatus.FontWeight = FontWeights.SemiBold;
-        panel.Children.Add(Section(
-            "3 · Import into Revit",
-            FieldBlock("Revit object name", _name),
-            _objectNameValidation,
-            FieldBlock("Revit import type", _importMode),
-            _importModeHelp,
-            _applyMaterials,
+        advancedContent.Children.Add(Section(
+            "Import",
             _importStatus,
             ActionRow(_import)));
 
@@ -300,9 +346,14 @@ internal sealed class TripoRevitWindow : Window
             FieldBlock("Import operation UUID", _importOperation));
         detailsContent.Children.Add(_importReceiptBlock);
         _detailsExpander.Header = "Workflow details and durable IDs";
-        _detailsExpander.Margin = new Thickness(0, 12, 0, 0);
+        _detailsExpander.Margin = new Thickness(0, 8, 0, 0);
         _detailsExpander.Content = detailsContent;
-        panel.Children.Add(_detailsExpander);
+        advancedContent.Children.Add(_detailsExpander);
+
+        _advancedExpander.Header = "Advanced";
+        _advancedExpander.Margin = new Thickness(0, 8, 0, 0);
+        _advancedExpander.Content = advancedContent;
+        panel.Children.Add(_advancedExpander);
 
         _reset.ToolTip =
             "Clear the resolved panel workflow. This does not cancel remote " +
@@ -314,7 +365,8 @@ internal sealed class TripoRevitWindow : Window
         _checkRecovery.ToolTip =
             "Read local journal state for recovered paid UUIDs; this sends no " +
             "paid request and performs no import.";
-        panel.Children.Add(ActionRow(_reset));
+        _create.ToolTip =
+            "Generate, convert to OBJ, and import into the active Revit project.";
         return panel;
     }
 
@@ -627,6 +679,137 @@ internal sealed class TripoRevitWindow : Window
         }
     }
 
+    private async void OnCreate(object sender, RoutedEventArgs args)
+    {
+        CancellationTokenSource? pipelineCts = null;
+        try
+        {
+            _generationRefreshFailed = false;
+            _conversionRefreshFailed = false;
+            _generationJournalUpdatedOnFailedRefresh = false;
+            _conversionJournalUpdatedOnFailedRefresh = false;
+            await RunWithStatusAsync(
+                "Verifying the active Revit document…",
+                () => _session.ConnectAsync());
+
+            if (_session.State.CredentialStatus?.HasApiKey != true)
+            {
+                await PromptForApiKeyAsync(
+                    recoveryMode: false,
+                    exactOriginalKeyRequired: false);
+                if (_session.State.CredentialStatus?.HasApiKey != true)
+                {
+                    return;
+                }
+            }
+
+            if (!Tripo.HostUi.TripoPanelPresentation.TryParseFaceLimit(
+                    _faceLimit.Text,
+                    out int faceLimit))
+            {
+                _settingsExpander.IsExpanded = true;
+                UpdateControls(_session.State);
+                return;
+            }
+
+            string objectName = ResolveObjectName();
+            if (string.IsNullOrWhiteSpace(objectName))
+            {
+                _settingsExpander.IsExpanded = true;
+                UpdateControls(_session.State);
+                return;
+            }
+
+            ImportModeOption importMode =
+                _importMode.SelectedItem as ImportModeOption ??
+                ImportModeOption.All[0];
+            PlacementModeOption placement =
+                _placementMode.SelectedItem as PlacementModeOption ??
+                PlacementModeOption.All[0];
+            bool withMaterials = _withMaterials.IsChecked == true;
+            bool applyMaterials =
+                withMaterials && _applyMaterials.IsChecked == true;
+            bool associateLevel =
+                _associateLevel.IsChecked == true &&
+                string.Equals(importMode.Value, "family", StringComparison.Ordinal);
+
+            if (!ConfirmPaidDispatch(
+                    "Create model in Revit?",
+                    operationId: null,
+                    retry: false,
+                    "This runs generation and OBJ conversion, then imports into " +
+                    "the active project. Generation and conversion may consume " +
+                    "Tripo credits." +
+                    Environment.NewLine +
+                    Environment.NewLine +
+                    "Prompt: " + BoundSummary(_prompt.Text) +
+                    Environment.NewLine +
+                    $"Face limit: {faceLimit}" +
+                    Environment.NewLine +
+                    "Import type: " + importMode.Label +
+                    Environment.NewLine +
+                    "Placement: " + placement.Label))
+            {
+                return;
+            }
+
+            PersistUserSettings();
+            pipelineCts = new CancellationTokenSource();
+            _pipelineCancellation = pipelineCts;
+            Progress<Tripo.HostUi.TripoPipelineProgress> progress = new(
+                update =>
+                {
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        _pipelineStageLabel = update.StageLabel;
+                        _pipelineProgressValue = update.ProgressPercent;
+                        _currentAction = update.StageLabel;
+                        UpdateControls(_session.State);
+                    });
+                });
+
+            _currentAction = "Creating…";
+            _pipelineStageLabel = "Creating…";
+            _pipelineProgressValue = 0;
+            UpdateControls(_session.State);
+            try
+            {
+                await _session.RunCreatePipelineAsync(
+                    _prompt.Text,
+                    faceLimit,
+                    withMaterials,
+                    objectName,
+                    importMode.Value,
+                    applyMaterials,
+                    userConfirmedExternalCost: true,
+                    placement.Value,
+                    associateLevel,
+                    progress,
+                    pipelineCts.Token);
+            }
+            finally
+            {
+                _currentAction = null;
+            }
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception);
+        }
+        finally
+        {
+            if (ReferenceEquals(_pipelineCancellation, pipelineCts))
+            {
+                _pipelineCancellation = null;
+            }
+
+            pipelineCts?.Dispose();
+            _pipelineStageLabel = null;
+            _pipelineProgressValue = null;
+            UpdateControls(_session.State);
+        }
+    }
+
     private async void OnGenerate(object sender, RoutedEventArgs args)
     {
         try
@@ -807,7 +990,10 @@ internal sealed class TripoRevitWindow : Window
                     ? _session.PrepareImport(
                     _name.Text,
                     mode.Value,
-                    _applyMaterials.IsChecked == true)
+                    _applyMaterials.IsChecked == true,
+                    (_placementMode.SelectedItem as PlacementModeOption ??
+                     PlacementModeOption.All[0]).Value,
+                    _associateLevel.IsChecked == true)
                     : _session.State.PreparedImport;
             UpdateControls(_session.State);
             await RunWithStatusAsync(
@@ -857,25 +1043,32 @@ internal sealed class TripoRevitWindow : Window
 
     private bool ConfirmPaidDispatch(
         string caption,
-        string operationId,
+        string? operationId,
         bool retry,
-        string requestSummary) =>
-        MessageBox.Show(
-            this,
-            (retry
+        string requestSummary)
+    {
+        string body = (retry
                 ? "This retries the existing durable operation ID; it does not " +
                   "create a replacement ID. The sidecar journal will replay a " +
                   "receipt or fail closed. If no paid request was accepted " +
                   "previously, this retry can consume Tripo credits.\n\n"
                 : "This action can consume Tripo credits.\n\n") +
-            requestSummary +
-            "\n\n" +
-            $"Durable operation ID:\n{operationId}\n\n" +
-            "Keep this ID if the response is lost.",
+            requestSummary;
+        if (!string.IsNullOrWhiteSpace(operationId))
+        {
+            body += "\n\n" +
+                    $"Durable operation ID:\n{operationId}\n\n" +
+                    "Keep this ID if the response is lost.";
+        }
+
+        return MessageBox.Show(
+            this,
+            body,
             caption,
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No) == MessageBoxResult.Yes;
+    }
 
     private async Task RunWithStatusAsync(
         string currentAction,
@@ -904,6 +1097,23 @@ internal sealed class TripoRevitWindow : Window
         SelectionChangedEventArgs args)
     {
         UpdateImportModeHelp();
+        UpdateAssociateLevelEnabled();
+        PersistUserSettings();
+        UpdateControls(_session.State);
+    }
+
+    private void OnPlacementModeChanged(
+        object sender,
+        SelectionChangedEventArgs args)
+    {
+        UpdatePlacementModeHelp();
+        PersistUserSettings();
+        UpdateControls(_session.State);
+    }
+
+    private void OnSettingsChanged(object sender, RoutedEventArgs args)
+    {
+        PersistUserSettings();
         UpdateControls(_session.State);
     }
 
@@ -916,6 +1126,128 @@ internal sealed class TripoRevitWindow : Window
         AutomationProperties.SetHelpText(
             _importMode,
             mode.Description);
+        UpdateAssociateLevelEnabled();
+    }
+
+    private void UpdatePlacementModeHelp()
+    {
+        PlacementModeOption mode =
+            _placementMode.SelectedItem as PlacementModeOption ??
+            PlacementModeOption.All[0];
+        AutomationProperties.SetHelpText(
+            _placementMode,
+            mode.Description);
+    }
+
+    private void UpdateAssociateLevelEnabled()
+    {
+        ImportModeOption mode =
+            _importMode.SelectedItem as ImportModeOption ??
+            ImportModeOption.All[0];
+        bool family = string.Equals(
+            mode.Value,
+            "family",
+            StringComparison.Ordinal);
+        if (!family)
+        {
+            _associateLevel.IsChecked = false;
+        }
+    }
+
+    private string ResolveObjectName()
+    {
+        if (!string.IsNullOrWhiteSpace(_name.Text))
+        {
+            return _name.Text.Trim();
+        }
+
+        string prompt = _prompt.Text.Trim();
+        if (string.IsNullOrWhiteSpace(prompt))
+        {
+            return "Tripo Model";
+        }
+
+        string derived = prompt.Length <= 64 ? prompt : prompt[..64];
+        return string.IsNullOrWhiteSpace(derived) ? "Tripo Model" : derived;
+    }
+
+    private void ApplyUserSettings(TripoPanelUserSettings settings)
+    {
+        _faceLimit.Text = settings.FaceLimit.ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
+        _withMaterials.IsChecked = settings.WithMaterials;
+        _name.Text = string.IsNullOrWhiteSpace(settings.ObjectName)
+            ? "Tripo Model"
+            : settings.ObjectName;
+        _applyMaterials.IsChecked = settings.ApplyMaterials;
+        _associateLevel.IsChecked = settings.AssociateLevel;
+        SelectImportMode(settings.ImportMode);
+        SelectPlacementMode(settings.PlacementMode);
+    }
+
+    private void PersistUserSettings()
+    {
+        try
+        {
+            ImportModeOption importMode =
+                _importMode.SelectedItem as ImportModeOption ??
+                ImportModeOption.All[0];
+            PlacementModeOption placement =
+                _placementMode.SelectedItem as PlacementModeOption ??
+                PlacementModeOption.All[0];
+            int faceLimit =
+                Tripo.HostUi.TripoPanelPresentation.TryParseFaceLimit(
+                    _faceLimit.Text,
+                    out int parsed)
+                    ? parsed
+                    : 20_000;
+            new TripoPanelUserSettings(
+                faceLimit,
+                _withMaterials.IsChecked == true,
+                ResolveObjectName(),
+                importMode.Value,
+                _applyMaterials.IsChecked == true,
+                placement.Value,
+                _associateLevel.IsChecked == true).Save();
+        }
+        catch
+        {
+            // Settings persistence is best-effort.
+        }
+    }
+
+    private void SelectImportMode(string value)
+    {
+        for (int index = 0; index < ImportModeOption.All.Count; index++)
+        {
+            if (string.Equals(
+                    ImportModeOption.All[index].Value,
+                    value,
+                    StringComparison.Ordinal))
+            {
+                _importMode.SelectedIndex = index;
+                return;
+            }
+        }
+
+        _importMode.SelectedIndex = 0;
+    }
+
+    private void SelectPlacementMode(string value)
+    {
+        for (int index = 0; index < PlacementModeOption.All.Count; index++)
+        {
+            if (string.Equals(
+                    PlacementModeOption.All[index].Value,
+                    value,
+                    StringComparison.Ordinal))
+            {
+                _placementMode.SelectedIndex = index;
+                return;
+            }
+        }
+
+        _placementMode.SelectedIndex = 0;
     }
 
     private void OnStateChanged(
@@ -966,14 +1298,16 @@ internal sealed class TripoRevitWindow : Window
                 reviewedCurrentRecovery,
                 _prompt.Text,
                 _faceLimit.Text,
-                _name.Text,
+                ResolveObjectName(),
                 "Revit",
                 _currentAction,
                 _generationRefreshFailed,
                 _conversionRefreshFailed,
                 _generationJournalUpdatedOnFailedRefresh,
                 _conversionJournalUpdatedOnFailedRefresh,
-                _recoveryInspectionHadFailures);
+                _recoveryInspectionHadFailures,
+                _pipelineStageLabel,
+                _pipelineProgressValue);
 
         _documentStatus.Text = presentation.DocumentStatus;
         _documentSession.Text = presentation.DocumentSessionId;
@@ -986,8 +1320,22 @@ internal sealed class TripoRevitWindow : Window
             _resultStatus,
             presentation.ResultKind.ToString());
 
+        SetLiveText(
+            _pipelineStage,
+            presentation.PipelineStageLabel,
+            VisibleWhen(
+                presentation.PipelineProgressVisible ||
+                !string.IsNullOrWhiteSpace(presentation.PipelineStageLabel)));
+        SetProgress(
+            _pipelineProgress,
+            presentation.PipelineProgress,
+            presentation.PipelineStageLabel);
+
         SetLiveText(_recoveryHeader, presentation.RecoveryHeader);
         _recoveryStatus.Text = presentation.RecoveryDetails;
+        _recoveryExpander.Visibility = VisibleWhen(
+            presentation.RecoveryHasBlock ||
+            presentation.CheckRecoveryEnabled);
         if (presentation.RecoveryHasBlock && !_recoveryWasBlocked)
         {
             _recoveryExpander.IsExpanded = true;
@@ -1040,6 +1388,9 @@ internal sealed class TripoRevitWindow : Window
             presentation.ObjectNameValidation,
             VisibleWhen(presentation.ObjectNameValidationVisible));
 
+        _create.IsEnabled = presentation.PrimaryActionEnabled;
+        _create.Content = presentation.PrimaryActionText;
+        SetActionHelp(_create, presentation.PrimaryActionHelp);
         _connect.IsEnabled = presentation.ConnectEnabled;
         SetActionHelp(_connect, presentation.ConnectHelp);
         _apiKey.IsEnabled = presentation.ApiKeyEnabled;
@@ -1079,13 +1430,36 @@ internal sealed class TripoRevitWindow : Window
         _reset.IsEnabled = presentation.ResetEnabled;
         SetActionHelp(_reset, presentation.ResetHelp);
         _prompt.IsEnabled = presentation.PromptEnabled;
+        bool settingsUnlocked =
+            presentation.FaceLimitEnabled ||
+            presentation.NameEnabled ||
+            !string.IsNullOrWhiteSpace(_currentAction);
         _faceLimit.IsEnabled = presentation.FaceLimitEnabled;
         _withMaterials.IsEnabled = presentation.WithMaterialsEnabled;
-        _name.IsEnabled = presentation.NameEnabled;
-        _importMode.IsEnabled = presentation.ImportModeEnabled;
+        _name.IsEnabled =
+            presentation.NameEnabled ||
+            presentation.PromptEnabled;
+        _importMode.IsEnabled =
+            presentation.ImportModeEnabled ||
+            presentation.PromptEnabled;
         _applyMaterials.IsEnabled =
-            presentation.ApplyMaterialsEnabled;
-        if (state.PreparedConversion?.WithMaterials != true)
+            presentation.ApplyMaterialsEnabled ||
+            (presentation.PromptEnabled &&
+             _withMaterials.IsChecked == true);
+        _placementMode.IsEnabled =
+            presentation.ImportModeEnabled ||
+            presentation.PromptEnabled;
+        _associateLevel.IsEnabled =
+            (presentation.ImportModeEnabled ||
+             presentation.PromptEnabled) &&
+            string.Equals(
+                (_importMode.SelectedItem as ImportModeOption)?.Value ??
+                "family",
+                "family",
+                StringComparison.Ordinal);
+        _ = settingsUnlocked;
+        if (state.PreparedConversion?.WithMaterials != true &&
+            !presentation.PromptEnabled)
         {
             _applyMaterials.IsChecked = false;
         }
@@ -1159,15 +1533,8 @@ internal sealed class TripoRevitWindow : Window
             return;
         }
 
+        // Keep workflow state; reopen from the ribbon without a modal.
         args.Cancel = true;
-        MessageBox.Show(
-            this,
-            "The Tripo panel was hidden so its workflow and durable operation " +
-            "IDs remain available. Reopen it from Add-Ins > Tripo > Tripo 3D. " +
-            "Use New workflow only after unresolved operations are reconciled.",
-            "Tripo workflow retained",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
         Hide();
     }
 
@@ -1182,6 +1549,13 @@ internal sealed class TripoRevitWindow : Window
         _session.StateChanged -= OnStateChanged;
         _session.RecoveryChanged -= OnRecoveryChanged;
         _sessionDisposal = _session.DisposeAsync().AsTask();
+    }
+
+    private static Button PrimaryActionButton(string content)
+    {
+        Button button = ActionButton(content);
+        button.FontSize = 14;
+        return button;
     }
 
     private static Button ActionButton(string content)
@@ -1472,6 +1846,27 @@ internal sealed class TripoRevitWindow : Window
                 "mesh",
                 "Creates one non-solid Generic Models DirectShape in the " +
                 "current project; no reusable family file is saved."),
+        ];
+
+        public override string ToString() => Label;
+    }
+
+    private sealed record PlacementModeOption(
+        string Label,
+        string Value,
+        string Description)
+    {
+        public static IReadOnlyList<PlacementModeOption> All { get; } =
+        [
+            new(
+                "Project origin",
+                "origin",
+                "Places the imported model at the project origin (0,0,0)."),
+            new(
+                "Pick point in view",
+                "pick",
+                "After import, click a point in the active Revit view. " +
+                "Esc keeps the model at the origin."),
         ];
 
         public override string ToString() => Label;

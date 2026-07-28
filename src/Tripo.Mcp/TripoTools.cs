@@ -226,6 +226,14 @@ public sealed class TripoTools
             "When true, apply the baked OBJ/MTL diffuse materials and textures; this " +
             "fails closed when the converted bundle has no MTL. When false, import " +
             "geometry only.")] bool applyMaterials = false,
+        [Description(
+            "Placement: origin places at the project origin; pick prompts for a " +
+            "point in the active Revit view after import.")]
+        string placementMode = "origin",
+        [Description(
+            "When true and import mode resolves to a Revit family instance, " +
+            "associate the nearest level by Z. Ignored for mesh DirectShapes.")]
+        bool associateLevel = false,
         CancellationToken cancellationToken = default) =>
         InvokeAsync(
             () => _workflow.ImportObjTaskAsync(
@@ -235,7 +243,9 @@ public sealed class TripoTools
                 operationId,
                 importMode,
                 applyMaterials,
-                cancellationToken),
+                cancellationToken,
+                placementMode,
+                associateLevel),
             cancellationToken);
 
     private static async Task<T> InvokeAsync<T>(

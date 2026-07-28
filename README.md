@@ -18,7 +18,7 @@ It is not an official Tripo or Autodesk product.
 Revit WPF window            MCP client
        ↕ host-control          ↕ stdio
        Tripo.Revit.Mcp sidecar / server ── Tripo v3 HTTPS API
-                    ↕ authenticated protocol-v2 host bridge
+                    ↕ authenticated protocol-v3 host bridge
                  Tripo.Revit add-in
                     ↕ bounded ExternalEvent FIFO + transactions
                  exact active Revit project document
@@ -92,7 +92,7 @@ Building the host project also builds the matching sidecar and copies its
 complete output into
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`. The separate
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` output is needed only for the optional MCP
-path. Bridge protocol v2 and host-control protocol v4 have no
+path. Bridge protocol v3 and host-control protocol v5 have no
 backward-compatibility shim, so deploy all components from the same repository
 revision.
 
@@ -263,60 +263,47 @@ the paid-operation journal during recovery.
 1. Start Revit 2026, open the writable target project, and choose
    **Add-Ins → Tripo → Tripo 3D**. Repeated clicks activate the same modeless
    window. If it owns workflow state, clicking the close button hides it
-   instead of discarding the session; use the ribbon command to show it again.
-2. The window automatically connects to the active project.
-   **Connect / Refresh** can refresh it explicitly. Generation and conversion
-   state survives project switches. An import is bound only after its fresh UUID
-   is prepared for the currently active target; switching is blocked only while
-   that import's dispatch outcome is unresolved.
-3. If no key is usable, paste one into **API key…** and choose persistent or
-   session-only storage. A saved key can be explicitly removed from the same
-   header; environment-provided keys are reported separately. Create keys at
+   silently; use the ribbon command to show it again.
+2. The window automatically connects to the active project. Enter a prompt and
+   click **Create in Revit**. One credit confirmation covers generation and
+   OBJ conversion; the panel then auto-polls, converts, and imports without
+   manual Refresh / Convert / Import clicks. Progress shows
+   Generating → Converting → Importing on a single bar.
+3. If no key is usable, **Create** opens the API-key dialog (also available
+   under **Settings**). Create keys at
    [Tripo Platform](https://platform.tripo3d.ai/api-keys).
-4. Enter the prompt, face limit, and material preference. Click **Generate**.
-   The window displays a selectable durable operation UUID before showing a
-   credit confirmation with the bounded request summary. Declining sends no
-   paid request.
-5. Click **Refresh generation** until the task reports `success`.
-6. Click **Convert to OBJ**. It uses a different UUID and a separate credit
-   confirmation. Refresh conversion until `success`.
-7. Choose **Revit family (recommended)** or **DirectShape mesh**, name the
-   object, and choose whether the import should apply baked materials from the
-   OBJ bundle. Then click the import button, which names the active target
-   project. The final receipt reports the actual created-element, material, and
-   texture counts; a request for materials never becomes a claim that they were
-   present. Activate another writable project and reconnect to import the same
-   conversion there under a new import UUID.
+4. Open **Settings** for face limit, materials, object name, import type
+   (family or DirectShape), placement (**project origin** or **pick point**),
+   and optional nearest-level association for family instances. Category stays
+   Generic Models and format stays OBJ. Preferences persist under the local
+   data root (`ui-settings/revit-panel.json`).
+5. Use **Advanced** for Connect/Refresh, per-stage Generate/Convert/Import,
+   recovery tools, and expandable durable UUIDs / diagnostics. MCP clients
+   continue to use the staged tool surface.
 
-The three numbered stages show only their current actionable status. Expand
-**Workflow details and durable IDs** to copy document/session IDs, operation
-UUIDs, task IDs, raw failure/credit/timestamp evidence, and the final Revit
-import receipt. Task state is explicitly last-known until a manual refresh.
-Progress is shown only for a queued/running task when the provider returned a
-valid value from 0 through 100; absent or inconsistent terminal progress
-remains diagnostic evidence rather than becoming a misleading progress bar.
+Generation and conversion state survives project switches. An import is bound
+only after its fresh UUID is prepared for the currently active target;
+switching is blocked only while that import's dispatch outcome is unresolved.
+Activate another writable project and reconnect (Advanced) to import the same
+conversion there under a new import UUID.
 
-The modeless window never accesses `Document` or `UIApplication` directly;
-context and mutation still travel sidecar → host bridge → bounded
-`ExternalEvent`. It does not auto-poll or claim to cancel remote tasks. After a
-lost response, the stage first requires **Refresh**. A retry becomes available
-only when the paid-operation journal says creation can resume, and the button
-is explicitly labelled **Retry … (same UUID)**. Once a durable task or import
-receipt is confirmed, the stage action is disabled instead of looking like a
-new request. An inconsistent import receipt remains visible and copyable,
-keeps the same-UUID retry available, and cannot be cleared as if it were a
-success. **New workflow** remains disabled until the current workflow is
-explicitly reset. Environment-provided keys cannot be replaced from the
-panel. An accepted or ambiguous dispatch remains account-bound until reset:
-replacement keys are session-only, must belong to the same Tripo account, and
-an unresolved paid UUID without a durable task requires the exact original
-key. A durable `request_rejected` receipt is different because it proves no
-remote task was created: generation rejection clears generation and every
-downstream stage, while conversion rejection clears only conversion/import and
-preserves the successful account-bound generation. Correct the credential and
-prepare a new UUID for the rejected stage. Resetting a resolved workflow
-requires a default-No confirmation and does not cancel remote tasks, remove
-journal evidence, or delete imported Revit objects.
+The modeless window never accesses `Document` or `UIApplication` directly for
+workflow state; context and mutation still travel sidecar → host bridge →
+bounded `ExternalEvent` (pick-to-place uses the API thread after commit). After
+a lost response, Advanced stage actions still require **Refresh**. A retry
+becomes available only when the paid-operation journal says creation can
+resume. **New** remains disabled until the current workflow is explicitly
+reset. Environment-provided keys cannot be replaced from the panel. An accepted
+or ambiguous dispatch remains account-bound until reset: replacement keys are
+session-only, must belong to the same Tripo account, and an unresolved paid
+UUID without a durable task requires the exact original key. A durable
+`request_rejected` receipt is different because it proves no remote task was
+created: generation rejection clears generation and every downstream stage,
+while conversion rejection clears only conversion/import and preserves the
+successful account-bound generation. Correct the credential and prepare a new
+UUID for the rejected stage. Resetting a resolved workflow requires a
+default-No confirmation and does not cancel remote tasks, remove journal
+evidence, or delete imported Revit objects.
 
 Before dispatch, the window's shared state layer atomically writes a private
 recovery hint under
@@ -647,7 +634,7 @@ bound.
 - If exactly one already-loaded Family has the derived retry name, it is reused
   without revalidating its content or provenance before its first usable
   symbol is placed.
-- No one-call paid workflow, installer, signing, or automatic update.
+- No installer, signing, or automatic update. MCP remains staged (no one-call paid MCP tool).
 - Production HTTP connections intentionally do not use system proxies.
 - No completed real Revit 2026 runtime acceptance.
 

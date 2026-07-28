@@ -892,7 +892,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
     {
         try
         {
-            Asset? asset = appearance.GetAppearanceAsset();
+            Asset? asset = appearance.GetRenderingAsset();
             if (asset is null)
             {
                 return false;

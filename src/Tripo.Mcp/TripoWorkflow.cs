@@ -403,10 +403,16 @@ public sealed class TripoWorkflow : ITripoWorkflow
             await RequireActiveDocumentAsync(documentSessionId, cancellationToken)
                 .ConfigureAwait(false);
         string resolvedMode = ResolveImportMode(requestedMode, context.Host);
+        List<string> warnings = new();
         if (associateLevel &&
             !string.Equals(resolvedMode, "family", StringComparison.Ordinal))
         {
             associateLevel = false;
+            warnings.Add(
+                $"associateLevel was requested but import mode resolved to " +
+                $"'{resolvedMode}' on host '{context.Host}'; level association is only " +
+                "supported for Revit family instances. The import proceeded without " +
+                "associating a level.");
         }
 
         (TripoTaskSnapshot conversionTask, Tripo.Bridge.StagedBundle bundle) =
@@ -445,7 +451,8 @@ public sealed class TripoWorkflow : ITripoWorkflow
             canonicalOperationId,
             conversionTaskId,
             conversionTask.CreditsConsumed,
-            hostReceipt);
+            hostReceipt,
+            warnings);
     }
 
     public async Task<ObjTaskStageReceipt> StageObjTaskAsync(

@@ -590,6 +590,7 @@ public sealed class HostControlDispatcherTests
                         "mesh",
                         0,
                         0,
-                        null)));
+                        null),
+                    Array.Empty<string>()));
     }
 }

@@ -117,7 +117,8 @@ public sealed record ObjTaskImportReceipt(
     string OperationId,
     string ConversionTaskId,
     decimal? ConversionCreditsConsumed,
-    Tripo.Bridge.HostImportReceipt HostReceipt);
+    Tripo.Bridge.HostImportReceipt HostReceipt,
+    IReadOnlyList<string> Warnings);
 
 public sealed record ObjTaskStageReceipt(
     string ConversionTaskId,

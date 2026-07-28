@@ -694,6 +694,82 @@ public sealed class TripoWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task ImportStageWarnsWhenAssociateLevelIsDowngradedOnMeshMode()
+    {
+        string requestedSession = Guid.NewGuid().ToString("D");
+        string operationId = Guid.NewGuid().ToString("D");
+        FakeApiClient api = new();
+        api.TaskSnapshots.Enqueue(Success(
+            "task_conversion123",
+            "convert_model",
+            "https://cdn.example.test/model.obj"));
+        FakeHostConnection host = new();
+        host.Contexts.Enqueue(Context(requestedSession));
+        host.Contexts.Enqueue(Context(requestedSession));
+        Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
+            api,
+            new FakeArtifactStager(),
+            host);
+
+        // associateLevel=true on a Rhino host with importMode=mesh resolves to
+        // mode 'mesh', which is not 'family', so the request must downgrade to
+        // associateLevel=false and surface a warning rather than silently drop.
+        Tripo.Mcp.ObjTaskImportReceipt receipt =
+            await workflow.ImportObjTaskAsync(
+                "task_conversion123",
+                "Chair",
+                requestedSession,
+                operationId,
+                "mesh",
+                applyMaterials: false,
+                CancellationToken.None,
+                placementMode: "origin",
+                associateLevel: true);
+
+        Assert.NotNull(receipt.Warnings);
+        Assert.NotEmpty(receipt.Warnings);
+        Assert.Contains(receipt.Warnings, w => w.Contains("associateLevel", StringComparison.Ordinal));
+        // The host request must have actually received associateLevel=false.
+        Assert.False(host.LastImportRequest?.AssociateLevel);
+    }
+
+    [Fact]
+    public async Task ImportStageOmitsWarningWhenAssociateLevelAppliesOnFamilyMode()
+    {
+        string requestedSession = Guid.NewGuid().ToString("D");
+        string operationId = Guid.NewGuid().ToString("D");
+        FakeApiClient api = new();
+        api.TaskSnapshots.Enqueue(Success(
+            "task_conversion123",
+            "convert_model",
+            "https://cdn.example.test/model.obj"));
+        FakeHostConnection host = new();
+        // Revit host so importMode=native resolves to family.
+        host.Contexts.Enqueue(Context(requestedSession, host: "revit"));
+        host.Contexts.Enqueue(Context(requestedSession, host: "revit"));
+        Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
+            api,
+            new FakeArtifactStager(),
+            host);
+
+        Tripo.Mcp.ObjTaskImportReceipt receipt =
+            await workflow.ImportObjTaskAsync(
+                "task_conversion123",
+                "Chair",
+                requestedSession,
+                operationId,
+                "native",
+                applyMaterials: false,
+                CancellationToken.None,
+                placementMode: "origin",
+                associateLevel: true);
+
+        // family mode keeps associateLevel=true and emits no downgrade warning.
+        Assert.True(host.LastImportRequest?.AssociateLevel);
+        Assert.Empty(receipt.Warnings);
+    }
+
+    [Fact]
     public async Task StageObjReturnsExactMeshDescriptorWithoutHostMutation()
     {
         FakeApiClient api = new();

@@ -731,13 +731,27 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
 
         HashSet<string> usedAppearanceNames = new(StringComparer.Ordinal);
         AppearanceAssetElement? templateAppearance = null;
+        AppearanceAssetElement? firstAppearance = null;
         foreach (AppearanceAssetElement appearance in new FilteredElementCollector(targetDocument)
             .OfClass(typeof(AppearanceAssetElement))
             .Cast<AppearanceAssetElement>())
         {
             usedAppearanceNames.Add(appearance.Name);
-            templateAppearance ??= appearance;
+            // Prefer an appearance asset whose diffuse slot already has a
+            // connected unified-bitmap (read-only probe, no EditScope). A
+            // template without a bindable bitmap silently downgrades every
+            // textured slot to color-only, so picking the first collector hit
+            // (whose ordering is undefined) is too brittle when the document
+            // also contains non-bitmap appearance assets. Fall back to the
+            // first candidate if none qualifies.
+            firstAppearance ??= appearance;
+            if (templateAppearance is null && HasBindableDiffuseBitmap(appearance))
+            {
+                templateAppearance = appearance;
+            }
         }
+
+        templateAppearance ??= firstAppearance;
 
         for (int slot = 0; slot < slotCount; slot++)
         {
@@ -867,6 +881,40 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
 
         bitmapPath.Value = texturePath;
         return true;
+    }
+
+    // Read-only probe mirroring TrySetDiffuseBitmap's bindability test, without
+    // opening an AppearanceAssetEditScope. Used only to pick a template whose
+    // diffuse slot already carries a connected unified-bitmap, so duplicating it
+    // yields an asset that TrySetDiffuseBitmap can repoint at the baked texture
+    // instead of silently downgrading to color-only.
+    private static bool HasBindableDiffuseBitmap(AppearanceAssetElement appearance)
+    {
+        try
+        {
+            Asset? asset = appearance.GetAppearanceAsset();
+            if (asset is null)
+            {
+                return false;
+            }
+
+            AssetProperty? diffuse = asset.FindByName(Generic.GenericDiffuse);
+            if (diffuse is null || diffuse.NumberOfConnectedProperties == 0)
+            {
+                return false;
+            }
+
+            Asset? connectedBitmap = diffuse.GetSingleConnectedAsset();
+            return connectedBitmap is not null &&
+                connectedBitmap.FindByName(UnifiedBitmap.UnifiedbitmapBitmap)
+                    is AssetPropertyString;
+        }
+        catch (Autodesk.Revit.Exceptions.ApplicationException)
+        {
+            // A partially-defined or locked appearance asset is not bindable;
+            // treat it as a non-qualifying template rather than failing import.
+            return false;
+        }
     }
 
     // DirectShapes carrying this dispatcher's ApplicationId whose ApplicationDataId

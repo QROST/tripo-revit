@@ -258,26 +258,14 @@ public static class MeshPreparation
             return null;
         }
 
-        // 1) Exact ordinal match on the full relative path — the common case.
-        foreach (StagedBundleEntry entry in entries)
-        {
-            if (string.Equals(
-                    NormalizeReference(entry.RelativePath),
-                    normalized,
-                    StringComparison.Ordinal))
-            {
-                return entry.RelativePath;
-            }
-        }
-
-        // 2) Case-insensitive full-path fallback. Tripo bakes the MTL and the
+        // 1) Full-path match. Tripo bakes the MTL and the
         // archive from different code paths that have been observed to disagree
         // on extension case (tex.PNG vs tex.png); matching case-insensitively
         // here resolves that without weakening path-containment (still checked
-        // post-resolve under ordinal semantics). Fail closed if two entries
-        // differ only by case — the caller should not silently pick one.
-        string? caseInsensitive = null;
-        bool ambiguous = false;
+        // post-resolve under ordinal semantics). Require exactly one match under
+        // that effective comparison, even when one candidate is also an exact
+        // ordinal hit, so case-only duplicates cannot be silently selected.
+        string? fullPathMatch = null;
         foreach (StagedBundleEntry entry in entries)
         {
             if (string.Equals(
@@ -285,19 +273,18 @@ public static class MeshPreparation
                     normalized,
                     StringComparison.OrdinalIgnoreCase))
             {
-                if (caseInsensitive is not null)
+                if (fullPathMatch is not null)
                 {
-                    ambiguous = true;
-                    break;
+                    return null;
                 }
 
-                caseInsensitive = entry.RelativePath;
+                fullPathMatch = entry.RelativePath;
             }
         }
 
-        if (!ambiguous && caseInsensitive is not null)
+        if (fullPathMatch is not null)
         {
-            return caseInsensitive;
+            return fullPathMatch;
         }
 
         if (normalized.Contains('/'))
@@ -305,31 +292,10 @@ public static class MeshPreparation
             return null;
         }
 
-        // 3) Bare-filename fallback for MTLs that write only the basename
-        // (no directory). Run exact and case-insensitive passes independently:
-        // an unambiguous exact hit wins; otherwise an unambiguous case-
-        // insensitive hit is accepted; two-or-more hits of any kind fail closed.
-        string? exactBare = null;
-        foreach (StagedBundleEntry entry in entries)
-        {
-            string entryBaseName = LastSegment(NormalizeReference(entry.RelativePath));
-            if (string.Equals(entryBaseName, normalized, StringComparison.Ordinal))
-            {
-                if (exactBare is not null)
-                {
-                    return null;
-                }
-
-                exactBare = entry.RelativePath;
-            }
-        }
-
-        if (exactBare is not null)
-        {
-            return exactBare;
-        }
-
-        string? caseInsensitiveBare = null;
+        // 2) Bare-filename fallback for MTLs that write only the basename
+        // (no directory). Apply the same exactly-one rule under the
+        // case-insensitive comparison.
+        string? bareMatch = null;
         foreach (StagedBundleEntry entry in entries)
         {
             string entryBaseName = LastSegment(NormalizeReference(entry.RelativePath));
@@ -338,16 +304,16 @@ public static class MeshPreparation
                     normalized,
                     StringComparison.OrdinalIgnoreCase))
             {
-                if (caseInsensitiveBare is not null)
+                if (bareMatch is not null)
                 {
                     return null;
                 }
 
-                caseInsensitiveBare = entry.RelativePath;
+                bareMatch = entry.RelativePath;
             }
         }
 
-        return caseInsensitiveBare;
+        return bareMatch;
     }
 
     private static string NormalizeReference(string value)

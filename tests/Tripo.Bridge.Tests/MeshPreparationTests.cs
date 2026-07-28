@@ -328,6 +328,60 @@ public sealed class MeshPreparationTests
             material.DiffuseTextureAbsolutePath);
     }
 
+    [Theory]
+    [InlineData(
+        "tex.png",
+        "a/tex.png",
+        "b/TEX.PNG")]
+    [InlineData(
+        "textures/tex.png",
+        "textures/tex.png",
+        "textures/TEX.PNG")]
+    public void PrepareRejectsCaseInsensitiveTextureAmbiguityEvenWithExactMatch(
+        string textureReference,
+        string firstEntry,
+        string secondEntry)
+    {
+        Tripo.Bridge.ParsedObjMesh mesh = SingleTriangle(
+            new Tripo.Bridge.MeshPoint3(0, 0, 0),
+            new Tripo.Bridge.MeshPoint3(1, 0, 0),
+            new Tripo.Bridge.MeshPoint3(0, 1, 0),
+            slot: 0,
+            "mat");
+        IReadOnlyList<Tripo.Bridge.ObjMaterial> materials =
+        [
+            new Tripo.Bridge.ObjMaterial(
+                "mat",
+                unchecked((int)0xFFFF0000),
+                textureReference),
+        ];
+        IReadOnlyList<Tripo.Bridge.StagedBundleEntry> entries =
+        [
+            new Tripo.Bridge.StagedBundleEntry(
+                firstEntry,
+                new string('a', 64),
+                10),
+            new Tripo.Bridge.StagedBundleEntry(
+                secondEntry,
+                new string('b', 64),
+                10),
+        ];
+
+        Tripo.Bridge.BridgeCallException exception =
+            Assert.Throws<Tripo.Bridge.BridgeCallException>(
+                () => Tripo.Bridge.MeshPreparation.Prepare(
+                    mesh,
+                    "meters",
+                    "Z",
+                    "right",
+                    System.IO.Path.GetTempPath(),
+                    materials,
+                    entries,
+                    applyMaterials: true));
+
+        Assert.Equal("mtl_invalid", exception.Code);
+    }
+
     [Fact]
     public void PrepareRejectsTextureMissingWithBundleEntryListInMessage()
     {

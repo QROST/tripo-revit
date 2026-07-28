@@ -1,4 +1,4 @@
-# Materials + import-target design (bridge protocol v2)
+# Materials + import-target design (bridge protocol v3)
 
 > Repository scope: Revit is the implementation shipped here. Rhino material
 > notes are retained as protocol compatibility constraints for the copied
@@ -180,10 +180,14 @@ public sealed record PreparedMaterial(
 Subset: `newmtl`, `Kd r g b` (0..1 floats → 24-bit RGB; alpha from `d`
 (opacity) or `Tr` (transparency, 1-d) → ARGB int), `map_Kd <options...>
 <file>` (LAST whitespace token is the filename; options ignored). Filename
-must resolve, after normalization, to a bundle entry (ordinal match against
-`request.Entries` relative paths; also try basename match if the MTL uses a
-bare filename). Unknown keywords ignored. Bounded: max 64 materials, max
-1024 lines, existing line-length cap reused.
+must resolve, after normalization, to exactly one bundle entry. Full relative
+paths are compared ordinal-ignore-case because Tripo's MTL and archive paths
+may disagree only in filename case; a bare MTL filename also gets an
+ordinal-ignore-case basename fallback. Two candidates under the effective
+comparison — even when one is an exact ordinal hit — are ambiguous and fail
+closed. Path-containment checks remain ordinal after resolution. Unknown
+keywords ignored. Bounded: max 64 materials, max 1024 lines, existing
+line-length cap reused.
 
 ### MeshPreparation v2
 
@@ -242,5 +246,5 @@ silent geometry-only import.
 
 ## Docs
 
-Done: ARCHITECTURE.md and all EN/zh-CN README pairs describe the protocol v2
-end-state (updated after the R and V host waves landed).
+Done: ARCHITECTURE.md and all EN/zh-CN README pairs describe the current bridge
+protocol v3 end-state (updated after the R and V host waves landed).

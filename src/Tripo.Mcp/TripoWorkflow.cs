@@ -485,17 +485,57 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string conversionTaskId,
         CancellationToken cancellationToken)
     {
-        TripoTaskSnapshot conversionTask = await GetTaskWithReadRetryAsync(
-                conversionTaskId,
-                cancellationToken)
-            .ConfigureAwait(false);
-        EnsureSuccessfulTask(conversionTask);
-        EnsureConversionTask(conversionTask);
-        string? modelUrl = conversionTask.Output?.ModelUrl;
-        if (!Uri.TryCreate(modelUrl, UriKind.Absolute, out Uri? modelUri))
+        // Tripo can report status=success a beat before output.model_url is
+        // populated. The panel pipeline imports immediately on success, so wait
+        // briefly for a downloadable URL instead of failing the first attempt.
+        using CancellationTokenSource readinessDeadline =
+            new(_options.ReadOperationDeadline, _timeProvider);
+        using CancellationTokenSource readinessCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                readinessDeadline.Token);
+        CancellationToken readinessToken = readinessCancellation.Token;
+        TimeSpan delay = _options.InitialReadRetryDelay;
+        TripoTaskSnapshot conversionTask;
+        Uri modelUri;
+        try
+        {
+            while (true)
+            {
+                conversionTask = await GetTaskWithReadRetryAsync(
+                        conversionTaskId,
+                        readinessToken)
+                    .ConfigureAwait(false);
+                EnsureSuccessfulTask(conversionTask);
+                EnsureConversionTask(conversionTask);
+                string? modelUrl = conversionTask.Output?.ModelUrl;
+                if (Uri.TryCreate(modelUrl, UriKind.Absolute, out Uri? readyUri) &&
+                    string.Equals(
+                        readyUri.Scheme,
+                        Uri.UriSchemeHttps,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    modelUri = readyUri;
+                    break;
+                }
+
+                await Task.Delay(delay, _timeProvider, readinessToken)
+                    .ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(
+                    Math.Min(
+                        delay.TotalMilliseconds * 2,
+                        _options.MaximumReadRetryDelay.TotalMilliseconds));
+            }
+        }
+        catch (OperationCanceledException exception)
+            when (!cancellationToken.IsCancellationRequested &&
+                  readinessDeadline.IsCancellationRequested)
         {
             throw new TripoWorkflowException(
-                "The successful OBJ conversion did not return a valid model URL.");
+                "The successful OBJ conversion did not return a valid model URL " +
+                "before the local readiness deadline. Retry import shortly; the " +
+                "remote task was not cancelled.",
+                exception);
         }
 
         Tripo.Bridge.StagedBundle bundle = await _artifactStager.StageBundleAsync(

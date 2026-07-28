@@ -1152,6 +1152,10 @@ public sealed class TripoPanelSession : IAsyncDisposable
             }
         }
 
+        // Match the Advanced Import path: refresh the active document/session
+        // immediately before preparing/dispatching import.
+        await ConnectAsync(cancellationToken).ConfigureAwait(false);
+
         state = State;
         if (state.PreparedImport is null ||
             state.HasConfirmedImportReceipt)

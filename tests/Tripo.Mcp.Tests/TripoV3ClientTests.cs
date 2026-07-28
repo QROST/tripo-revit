@@ -1191,8 +1191,10 @@ public sealed class TripoV3ClientTests
         Tripo.Mcp.TripoV3Client client = CreateClient(
             handler,
             modelEnvironmentProvider: () => "tripo-v3.1");
+        string effectiveModel =
+            client.ResolveEffectiveModel("P1-20260311");
         Tripo.Mcp.TextGenerationOptions options =
-            new("a test chair", 10_000, "tripo-v3.1");
+            new("a test chair", 10_000, effectiveModel);
         RecordingCheckpoint checkpoint = new(
             client.GetTextTaskOperationFingerprint(options));
 
@@ -1202,6 +1204,7 @@ public sealed class TripoV3ClientTests
             CancellationToken.None);
 
         Assert.Equal("task_source123", taskId);
+        Assert.Equal("tripo-v3.1", effectiveModel);
         Assert.Equal(
             "tripo-v3.1",
             payload!.RootElement.GetProperty("model").GetString());
@@ -1216,12 +1219,14 @@ public sealed class TripoV3ClientTests
         Tripo.Mcp.TripoV3Client client = CreateClient(
             handler,
             modelEnvironmentProvider: () => "bad model!");
-        Tripo.Mcp.TextGenerationOptions options =
-            new("a test chair", 10_000);
 
-        Assert.Throws<Tripo.Mcp.TripoApiException>(
-            () => client.GetTextTaskOperationFingerprint(options));
+        Tripo.Mcp.TripoApiException exception =
+            Assert.Throws<Tripo.Mcp.TripoApiException>(
+                () => client.ResolveEffectiveModel("P1-20260311"));
 
+        Assert.Equal(
+            "TRIPO_MODEL is set but is not a valid model identifier.",
+            exception.Message);
         Assert.Equal(0, handler.CallCount);
     }
 

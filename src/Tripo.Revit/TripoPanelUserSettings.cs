@@ -11,7 +11,8 @@ internal sealed record TripoPanelUserSettings(
     string ImportMode = "family",
     bool ApplyMaterials = true,
     string PlacementMode = "origin",
-    bool AssociateLevel = false)
+    bool AssociateLevel = false,
+    string Model = Tripo.Bridge.TripoModelCatalog.DefaultModelId)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

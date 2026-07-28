@@ -51,6 +51,12 @@ internal sealed class TripoRevitWindow : Window
         SelectedIndex = 0,
         MinWidth = 220,
     };
+    private readonly ComboBox _tripoModel = new()
+    {
+        ItemsSource = Tripo.Bridge.TripoModelCatalog.Models,
+        MinWidth = 280,
+    };
+    private readonly TextBlock _tripoModelHelp = StatusBlock();
     private readonly CheckBox _applyMaterials = WrappingCheckBox(
         "Apply baked materials from the OBJ bundle",
         "Requires an MTL material library. The import receipt reports actual " +
@@ -192,6 +198,7 @@ internal sealed class TripoRevitWindow : Window
         _name.TextChanged += OnFormInputChanged;
         _importMode.SelectionChanged += OnImportModeChanged;
         _placementMode.SelectionChanged += OnPlacementModeChanged;
+        _tripoModel.SelectionChanged += OnSettingsChanged;
         _withMaterials.Checked += OnSettingsChanged;
         _withMaterials.Unchecked += OnSettingsChanged;
         _applyMaterials.Checked += OnSettingsChanged;
@@ -276,6 +283,9 @@ internal sealed class TripoRevitWindow : Window
         _categoryNote.Opacity = 0.75;
 
         StackPanel settingsContent = new();
+        settingsContent.Children.Add(
+            FieldBlock("Tripo model", _tripoModel));
+        settingsContent.Children.Add(_tripoModelHelp);
         settingsContent.Children.Add(
             FieldBlock("Face limit (500–200,000)", _faceLimit));
         settingsContent.Children.Add(_faceLimitValidation);
@@ -726,6 +736,7 @@ internal sealed class TripoRevitWindow : Window
             PlacementModeOption placement =
                 _placementMode.SelectedItem as PlacementModeOption ??
                 PlacementModeOption.All[0];
+            string modelId = ResolveSelectedModelId();
             bool withMaterials = _withMaterials.IsChecked == true;
             bool applyMaterials =
                 withMaterials && _applyMaterials.IsChecked == true;
@@ -743,6 +754,8 @@ internal sealed class TripoRevitWindow : Window
                     Environment.NewLine +
                     Environment.NewLine +
                     "Prompt: " + BoundSummary(_prompt.Text) +
+                    Environment.NewLine +
+                    "Model: " + modelId +
                     Environment.NewLine +
                     $"Face limit: {faceLimit}" +
                     Environment.NewLine +
@@ -784,6 +797,7 @@ internal sealed class TripoRevitWindow : Window
                     userConfirmedExternalCost: true,
                     placement.Value,
                     associateLevel,
+                    modelId,
                     progress,
                     pipelineCts.Token);
             }
@@ -826,7 +840,8 @@ internal sealed class TripoRevitWindow : Window
                 _session.PrepareGeneration(
                     _prompt.Text,
                     ParseFaceLimit(),
-                    _withMaterials.IsChecked == true);
+                    _withMaterials.IsChecked == true,
+                    ResolveSelectedModelId());
             UpdateControls(_session.State);
             if (!ConfirmPaidDispatch(
                     retry
@@ -835,6 +850,8 @@ internal sealed class TripoRevitWindow : Window
                     prepared.OperationId,
                     retry,
                     "Prompt: " + BoundSummary(prepared.Prompt) +
+                    Environment.NewLine +
+                    "Model: " + prepared.Model +
                     Environment.NewLine +
                     $"Face limit: {prepared.FaceLimit}" +
                     Environment.NewLine +
@@ -1183,6 +1200,7 @@ internal sealed class TripoRevitWindow : Window
         _associateLevel.IsChecked = settings.AssociateLevel;
         SelectImportMode(settings.ImportMode);
         SelectPlacementMode(settings.PlacementMode);
+        SelectTripoModel(settings.Model);
     }
 
     private void PersistUserSettings()
@@ -1208,7 +1226,8 @@ internal sealed class TripoRevitWindow : Window
                 importMode.Value,
                 _applyMaterials.IsChecked == true,
                 placement.Value,
-                _associateLevel.IsChecked == true).Save();
+                _associateLevel.IsChecked == true,
+                ResolveSelectedModelId()).Save();
         }
         catch
         {
@@ -1248,6 +1267,60 @@ internal sealed class TripoRevitWindow : Window
         }
 
         _placementMode.SelectedIndex = 0;
+    }
+
+    private void SelectTripoModel(string value)
+    {
+        IReadOnlyList<Tripo.Bridge.TripoModelInfo> models =
+            _tripoModel.ItemsSource as IReadOnlyList<Tripo.Bridge.TripoModelInfo> ??
+            Tripo.Bridge.TripoModelCatalog.Models;
+        string normalized =
+            Tripo.Bridge.TripoModelCatalog.NormalizeOrDefault(value);
+        for (int index = 0; index < models.Count; index++)
+        {
+            if (string.Equals(
+                    models[index].Id,
+                    normalized,
+                    StringComparison.Ordinal))
+            {
+                _tripoModel.SelectedIndex = index;
+                return;
+            }
+        }
+
+        if (models.Count > 0)
+        {
+            _tripoModel.SelectedIndex = 0;
+        }
+    }
+
+    private string ResolveSelectedModelId()
+    {
+        if (_tripoModel.SelectedItem is Tripo.Bridge.TripoModelInfo selected)
+        {
+            return selected.Id;
+        }
+
+        return Tripo.Bridge.TripoModelCatalog.DefaultModelId;
+    }
+
+    private void RefreshTripoModelChoices(Tripo.HostUi.TripoPanelState state)
+    {
+        string current = ResolveSelectedModelId();
+        IReadOnlyList<Tripo.Bridge.TripoModelInfo> models =
+            state.AvailableModels is { Count: > 0 }
+                ? state.AvailableModels
+                : Tripo.Bridge.TripoModelCatalog.Models;
+        if (!ReferenceEquals(_tripoModel.ItemsSource, models))
+        {
+            _tripoModel.ItemsSource = models;
+        }
+
+        SelectTripoModel(current);
+        _tripoModelHelp.Text = string.IsNullOrWhiteSpace(state.ModelCatalogNote)
+            ? "Loaded from Tripo's documented model versions at panel start. " +
+              "TRIPO_MODEL overrides the selection when set for the sidecar."
+            : state.ModelCatalogNote;
     }
 
     private void OnStateChanged(
@@ -1434,6 +1507,8 @@ internal sealed class TripoRevitWindow : Window
             presentation.FaceLimitEnabled ||
             presentation.NameEnabled ||
             !string.IsNullOrWhiteSpace(_currentAction);
+        RefreshTripoModelChoices(state);
+        _tripoModel.IsEnabled = presentation.FaceLimitEnabled;
         _faceLimit.IsEnabled = presentation.FaceLimitEnabled;
         _withMaterials.IsEnabled = presentation.WithMaterialsEnabled;
         _name.IsEnabled =

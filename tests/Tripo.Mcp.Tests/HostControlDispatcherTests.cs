@@ -268,6 +268,66 @@ public sealed class HostControlDispatcherTests
         Assert.Equal(Environment.ProcessId, options?.HostProcessId);
     }
 
+    [Fact]
+    public async Task ListModelsReturnsCuratedCatalog()
+    {
+        FakeWorkflow workflow = new();
+        Tripo.Mcp.HostControlDispatcher dispatcher = CreateDispatcher(
+            new FakeCredentialService(),
+            workflow);
+
+        object result = await dispatcher.DispatchAsync(
+            Tripo.Bridge.HostControlConstants.ListModelsMethod,
+            Tripo.Bridge.BridgeJson.ToElement(new { }),
+            CancellationToken.None);
+
+        Tripo.Bridge.HostControlModelCatalogReceipt receipt =
+            Assert.IsType<Tripo.Bridge.HostControlModelCatalogReceipt>(result);
+        Assert.Equal(
+            Tripo.Bridge.TripoModelCatalog.DefaultModelId,
+            receipt.DefaultModelId);
+        Assert.Equal(
+            Tripo.Bridge.TripoModelCatalog.SourceCurated,
+            receipt.Source);
+        Assert.Contains(
+            receipt.Models,
+            model => string.Equals(
+                model.Id,
+                "P1-20260311",
+                StringComparison.Ordinal));
+        Assert.Contains(
+            Tripo.Bridge.HostControlConstants.ListModelsMethod,
+            Tripo.Bridge.HostControlConstants.WorkflowCapabilities);
+    }
+
+    [Fact]
+    public async Task TextWorkflowMethodMapsOptionalModel()
+    {
+        FakeWorkflow workflow = new();
+        Tripo.Mcp.HostControlDispatcher dispatcher = CreateDispatcher(
+            new FakeCredentialService(),
+            workflow);
+        string operationId = Guid.NewGuid().ToString("D");
+        Tripo.Bridge.HostControlCreateTextTaskRequest request = new(
+            "a timber pavilion",
+            25_000,
+            WithMaterials: true,
+            operationId,
+            ConfirmExternalCost: true,
+            RequireExistingOperation: false,
+            Model: "P1-20260311");
+
+        object result = await dispatcher.DispatchAsync(
+            Tripo.Bridge.HostControlConstants.CreateTextTaskMethod,
+            Tripo.Bridge.BridgeJson.ToElement(request),
+            CancellationToken.None);
+
+        Tripo.Bridge.HostControlTextTaskCreationReceipt receipt = Assert.IsType<
+            Tripo.Bridge.HostControlTextTaskCreationReceipt>(result);
+        Assert.Equal("P1-20260311", receipt.Model);
+        Assert.Equal(request, workflow.LastTextRequest);
+    }
+
     private static Tripo.Mcp.HostControlDispatcher CreateDispatcher(
         Tripo.Mcp.ITripoCredentialService credentials,
         Tripo.Mcp.ITripoWorkflow workflow) =>
@@ -393,7 +453,8 @@ public sealed class HostControlDispatcherTests
             string operationId,
             bool confirmExternalCost,
             CancellationToken cancellationToken,
-            bool requireExistingOperation = false)
+            bool requireExistingOperation = false,
+            string? model = null)
         {
             CreateTextCalls++;
             if (ThrowCredentialOnText)
@@ -418,12 +479,13 @@ public sealed class HostControlDispatcherTests
                 withMaterials,
                 operationId,
                 confirmExternalCost,
-                requireExistingOperation);
+                requireExistingOperation,
+                model);
             return Task.FromResult(
                 new Tripo.Mcp.TextTaskCreationReceipt(
                     operationId,
                     "task_source123",
-                    Tripo.Mcp.TripoV3Client.DefaultModel));
+                    model ?? Tripo.Mcp.TripoV3Client.DefaultModel));
         }
 
         public Task<Tripo.Mcp.ObjConversionCreationReceipt>
@@ -449,7 +511,8 @@ public sealed class HostControlDispatcherTests
             string operationId,
             bool confirmExternalCost,
             CancellationToken cancellationToken,
-            bool requireExistingOperation = false)
+            bool requireExistingOperation = false,
+            string? model = null)
         {
             if (ThrowPaidCredentialRejectionOnImage)
             {
@@ -466,12 +529,13 @@ public sealed class HostControlDispatcherTests
                     withMaterials,
                     operationId,
                     confirmExternalCost,
-                    requireExistingOperation);
+                    requireExistingOperation,
+                    model);
             return Task.FromResult(
                 new Tripo.Mcp.ImageTaskCreationReceipt(
                     operationId,
                     "task_image123",
-                    Tripo.Mcp.TripoV3Client.DefaultModel,
+                    model ?? Tripo.Mcp.TripoV3Client.DefaultModel,
                     image.Sha256));
         }
 

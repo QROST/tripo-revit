@@ -1225,6 +1225,39 @@ public sealed class TripoV3ClientTests
         Assert.Equal(0, handler.CallCount);
     }
 
+    [Fact]
+    public async Task CreateTextModelAsyncAcceptsAlternateCatalogModel()
+    {
+        JsonDocument? payload = null;
+        DelegateHttpMessageHandler handler = new(async (request, _) =>
+        {
+            payload = JsonDocument.Parse(await request.Content!.ReadAsStreamAsync());
+            return DelegateHttpMessageHandler.Json(
+                """{"code":0,"data":{"task_id":"task_source123"}}""");
+        });
+        Tripo.Mcp.TripoV3Client client = CreateClient(handler);
+        Tripo.Mcp.TextGenerationOptions options = new(
+            "a low poly sword",
+            3_000,
+            "P1-20260311");
+        RecordingCheckpoint checkpoint = CreateCheckpoint(client, options);
+
+        string taskId = await client.CreateTextModelAsync(
+            options,
+            checkpoint,
+            CancellationToken.None);
+
+        Assert.Equal("task_source123", taskId);
+        Assert.Equal(
+            "P1-20260311",
+            payload!.RootElement.GetProperty("model").GetString());
+        Assert.Equal("P1-20260311", client.ResolveEffectiveModel("P1-20260311"));
+        Assert.Equal(
+            Tripo.Mcp.TripoV3Client.DefaultModel,
+            client.ResolveEffectiveModel());
+        payload.Dispose();
+    }
+
     private static Tripo.Mcp.TripoV3Client CreateClient(
         HttpMessageHandler handler,
         Func<string?>? apiKeyProvider = null,

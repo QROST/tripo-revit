@@ -1494,7 +1494,7 @@ public sealed class TripoPanelSessionTests
             userConfirmedExternalCost: true,
             placementMode: "origin",
             associateLevel: true,
-            progress);
+            progress: progress);
 
         Assert.Equal(1, client.CreateTextCalls);
         Assert.Equal(1, client.CreateConversionCalls);

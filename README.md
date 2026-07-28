@@ -92,7 +92,7 @@ Building the host project also builds the matching sidecar and copies its
 complete output into
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`. The separate
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` output is needed only for the optional MCP
-path. Bridge protocol v3 and host-control protocol v5 have no
+path. Bridge protocol v3 and host-control protocol v6 have no
 backward-compatibility shim, so deploy all components from the same repository
 revision.
 
@@ -215,7 +215,7 @@ MCP client has a restricted `PATH`, use the absolute path to `dotnet`.
 | Variable | Where to set it | Requirement |
 | --- | --- | --- |
 | `TRIPO_API_KEY` | Sidecar / MCP server | Optional environment-supplied key. It overrides session and stored keys. The window can set a key without this variable. |
-| `TRIPO_MODEL` | Sidecar / MCP server | Optional text-generation model identifier. The default is `v3.1-20260211`; an override must match `[A-Za-z0-9._-]{1,64}`, is returned by the text-task receipt, and is part of the text-task paid request identity. Set it before Revit starts for the panel-launched sidecar. |
+| `TRIPO_MODEL` | Sidecar / MCP server | Optional text-generation model identifier. When set, it overrides the panel Settings choice. The default is `v3.1-20260211`; an override must match `[A-Za-z0-9._-]{1,64}`, is returned by the text-task receipt, and is part of the text-task paid request identity. Set it before Revit starts for the panel-launched sidecar. |
 | `TRIPO_HOST_PID` | MCP server only | Required when more than one live Revit bridge exists. Must be a positive integer. |
 | `TRIPO_LOCAL_DATA_DIR` | Revit and sidecar / MCP server | Optional absolute, private, stable local path. Every participating process must resolve exactly the same value. |
 | `TRIPO_SIDECAR_PATH` | Revit process only | Optional absolute development override to the matching `Tripo.Revit.Mcp.dll` or native apphost. Normal deployment uses the copied install-relative `sidecar/`; set an override before Revit starts. |
@@ -272,11 +272,15 @@ the paid-operation journal during recovery.
 3. If no key is usable, **Create** opens the API-key dialog (also available
    under **Settings**). Create keys at
    [Tripo Platform](https://platform.tripo3d.ai/api-keys).
-4. Open **Settings** for face limit, materials, object name, import type
+4. Open **Settings** for Tripo model (documented versions loaded at panel
+   start / Connect), face limit, materials, object name, import type
    (family or DirectShape), placement (**project origin** or **pick point**),
    and optional nearest-level association for family instances. Category stays
    Generic Models and format stays OBJ. Preferences persist under the local
    data root (`ui-settings/revit-panel.json`).
+   Tripo does not publish a list-models HTTP API; the picker uses the curated
+   documented catalog. `TRIPO_MODEL` still overrides the UI choice when set for
+   the sidecar.
 5. Use **Advanced** for Connect/Refresh, per-stage Generate/Convert/Import,
    recovery tools, and expandable durable UUIDs / diagnostics. MCP clients
    continue to use the staged tool surface.
@@ -388,7 +392,7 @@ The MCP front door exposes the same shared workflow as these eight tools:
 | `tripo_host_context` | none | Reads the connected Revit process and exact active-document session. No Tripo API call. |
 | `tripo_task_status` | `taskId` | Queries one existing Tripo task. |
 | `tripo_operation_status` | `operationId` | Reads a durable local paid-operation record. No Tripo or Revit call. |
-| `tripo_create_text_task` | `prompt`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost` | Creates one project-independent text-to-model task. `withMaterials=true` requests textured PBR generation (`texture`/`pbr`); `false` stays geometry-only. May consume credits. |
+| `tripo_create_text_task` | `prompt`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost`, optional `model` | Creates one project-independent text-to-model task. `withMaterials=true` requests textured PBR generation (`texture`/`pbr`); `false` stays geometry-only. Optional `model` selects a Tripo snapshot (e.g. `P1-20260311`); omitted uses `TRIPO_MODEL` or the catalog default. May consume credits. |
 | `tripo_stage_local_image` | `localImagePath` | Validates and privately snapshots one local PNG/JPEG and returns an opaque descriptor. No Tripo call. |
 | `tripo_create_image_task` | `transferId`, `sha256`, `byteLength`, `mediaType`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost` | Uploads one staged image and creates a project-independent image-to-model task with durable upload/generation checkpoints. Copy the four descriptor fields exactly from `tripo_stage_local_image`. May consume credits. |
 | `tripo_create_obj_conversion` | `sourceTaskId`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost` | Creates one project-independent OBJ conversion. `withMaterials=true` requests an OBJ bundle with a baked-diffuse MTL and image textures (`bake=true`); `false` converts geometry only. May consume credits. |

@@ -54,6 +54,9 @@ internal sealed class HostControlDispatcher :
                 Tripo.Bridge.HostControlConstants.HostContextMethod =>
                     await _workflow.GetHostContextAsync(cancellationToken)
                         .ConfigureAwait(false),
+                Tripo.Bridge.HostControlConstants.ListModelsMethod =>
+                    await _workflow.ListModelsAsync(cancellationToken)
+                        .ConfigureAwait(false),
                 Tripo.Bridge.HostControlConstants.CreateTextTaskMethod =>
                     await CreateTextTaskAsync(payload, cancellationToken)
                         .ConfigureAwait(false),
@@ -193,7 +196,8 @@ internal sealed class HostControlDispatcher :
                     request.OperationId,
                     request.ConfirmExternalCost,
                     cancellationToken,
-                    request.RequireExistingOperation)
+                    request.RequireExistingOperation,
+                    request.Model)
                 .ConfigureAwait(false);
         return new Tripo.Bridge.HostControlTextTaskCreationReceipt(
             receipt.OperationId,
@@ -241,7 +245,8 @@ internal sealed class HostControlDispatcher :
                     request.OperationId,
                     request.ConfirmExternalCost,
                     cancellationToken,
-                    request.RequireExistingOperation)
+                    request.RequireExistingOperation,
+                    request.Model)
                 .ConfigureAwait(false);
         return new Tripo.Bridge.HostControlImageTaskCreationReceipt(
             receipt.OperationId,

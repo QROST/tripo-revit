@@ -1243,7 +1243,10 @@ public sealed class TripoWorkflowTests : IDisposable
             CreateConversionCalls +
             GetTaskCalls;
 
-        public string ResolveEffectiveModel() => Tripo.Mcp.TripoV3Client.DefaultModel;
+        public string ResolveEffectiveModel(string? requestedModel = null) =>
+            string.IsNullOrWhiteSpace(requestedModel)
+                ? Tripo.Mcp.TripoV3Client.DefaultModel
+                : requestedModel.Trim();
 
         public string GetTextTaskOperationFingerprint(
             Tripo.Mcp.TextGenerationOptions options)

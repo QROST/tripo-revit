@@ -9,7 +9,7 @@ namespace Tripo.Mcp;
 
 public interface ITripoApiClient
 {
-    string ResolveEffectiveModel();
+    string ResolveEffectiveModel(string? requestedModel = null);
 
     string GetTextTaskOperationFingerprint(
         TextGenerationOptions options);
@@ -52,7 +52,7 @@ public sealed partial class TripoV3Client : ITripoApiClient
 {
     public const string ApiKeyEnvironmentVariable = "TRIPO_API_KEY";
     public const string ModelEnvironmentVariable = "TRIPO_MODEL";
-    public const string DefaultModel = "v3.1-20260211";
+    public const string DefaultModel = Tripo.Bridge.TripoModelCatalog.DefaultModelId;
     public static readonly Uri BaseUri = new("https://openapi.tripo3d.ai/v3/");
 
     private const int MaximumResponseBytes = 1024 * 1024;
@@ -106,21 +106,30 @@ public sealed partial class TripoV3Client : ITripoApiClient
             ?? (() => Environment.GetEnvironmentVariable(ModelEnvironmentVariable));
     }
 
-    public string ResolveEffectiveModel()
+    public string ResolveEffectiveModel(string? requestedModel = null)
     {
         string? overrideModel = _modelEnvironmentProvider();
-        if (overrideModel is null)
+        if (overrideModel is not null)
         {
-            return DefaultModel;
+            if (string.IsNullOrWhiteSpace(overrideModel) ||
+                !ModelIdRegex().IsMatch(overrideModel))
+            {
+                throw new TripoApiException(
+                    $"{ModelEnvironmentVariable} is set but is not a valid " +
+                    "model identifier.");
+            }
+
+            return overrideModel;
         }
 
-        if (!ModelIdRegex().IsMatch(overrideModel))
+        if (!string.IsNullOrWhiteSpace(requestedModel))
         {
-            throw new TripoApiException(
-                $"{ModelEnvironmentVariable} is set but is not a valid model identifier.");
+            string trimmed = requestedModel.Trim();
+            ValidateModelId(trimmed, nameof(requestedModel));
+            return trimmed;
         }
 
-        return overrideModel;
+        return DefaultModel;
     }
 
     public string GetTextTaskOperationFingerprint(
@@ -246,19 +255,13 @@ public sealed partial class TripoV3Client : ITripoApiClient
             cancellationToken);
     }
 
-    private TextGenerationRequest CreateTextGenerationRequest(
+    private static TextGenerationRequest CreateTextGenerationRequest(
         TextGenerationOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         ValidatePrompt(options.Prompt);
         ValidateFaceLimit(options.FaceLimit);
-        string effectiveModel = ResolveEffectiveModel();
-        if (!string.Equals(options.Model, effectiveModel, StringComparison.Ordinal))
-        {
-            throw new ArgumentException(
-                $"The first release supports only model {effectiveModel}.",
-                nameof(options));
-        }
+        ValidateModelId(options.Model, nameof(options));
 
         return new TextGenerationRequest(
             options.Prompt,
@@ -271,7 +274,7 @@ public sealed partial class TripoV3Client : ITripoApiClient
             ExportUv: false);
     }
 
-    private ImageOperationIdentity CreateImageOperationIdentity(
+    private static ImageOperationIdentity CreateImageOperationIdentity(
         ImageGenerationOptions options)
     {
         ValidateImageOptions(options);
@@ -290,7 +293,7 @@ public sealed partial class TripoV3Client : ITripoApiClient
             ExportUv: false);
     }
 
-    private ImageGenerationRequest CreateImageGenerationRequest(
+    private static ImageGenerationRequest CreateImageGenerationRequest(
         string fileToken,
         ImageGenerationOptions options)
     {
@@ -307,18 +310,12 @@ public sealed partial class TripoV3Client : ITripoApiClient
             ExportUv: false);
     }
 
-    private void ValidateImageOptions(ImageGenerationOptions options)
+    private static void ValidateImageOptions(ImageGenerationOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         Tripo.Bridge.ImageTransferStore.ValidateDescriptor(options.Image);
         ValidateFaceLimit(options.FaceLimit);
-        string effectiveModel = ResolveEffectiveModel();
-        if (!string.Equals(options.Model, effectiveModel, StringComparison.Ordinal))
-        {
-            throw new ArgumentException(
-                $"The first release supports only model {effectiveModel}.",
-                nameof(options));
-        }
+        ValidateModelId(options.Model, nameof(options));
     }
 
     private static ConvertModelRequest CreateObjConversionRequest(
@@ -1047,6 +1044,17 @@ public sealed partial class TripoV3Client : ITripoApiClient
             throw new ArgumentOutOfRangeException(
                 nameof(faceLimit),
                 "The first release limits faceLimit to 500 through 200000.");
+        }
+    }
+
+    internal static void ValidateModelId(string model, string paramName)
+    {
+        if (string.IsNullOrWhiteSpace(model) ||
+            !ModelIdRegex().IsMatch(model))
+        {
+            throw new ArgumentException(
+                "The model identifier must match [A-Za-z0-9._-]{1,64}.",
+                paramName);
         }
     }
 

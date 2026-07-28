@@ -157,7 +157,7 @@ public sealed class HostControlTests
         Tripo.Bridge.HostControlResponse response =
             await SendRawAsync(descriptor, request);
 
-        Assert.Equal("5", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("6", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.False(response.Ok);
         Assert.Equal("unsupported_protocol", response.Error?.Code);
         Assert.Equal(0, dispatcher.CallCount);
@@ -273,7 +273,7 @@ public sealed class HostControlTests
                 "rhino",
                 Environment.ProcessId));
 
-        Assert.Equal("5", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("6", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.Equal("sidecar_unavailable", exception.Code);
     }
 

@@ -2,7 +2,7 @@ namespace Tripo.Bridge;
 
 public static class HostControlConstants
 {
-    public const string ProtocolVersion = "5";
+    public const string ProtocolVersion = "6";
     public const string Channel = "host-control";
     public const int MaximumMessageBytes = 64 * 1024;
     public const int MaximumConcurrentClients = 4;
@@ -14,6 +14,7 @@ public static class HostControlConstants
     public const string CredentialSetMethod = "credential.set";
     public const string CredentialClearMethod = "credential.clear";
     public const string HostContextMethod = "workflow.host_context";
+    public const string ListModelsMethod = "workflow.list_models";
     public const string CreateTextTaskMethod = "workflow.create_text_task";
     public const string CreateImageTaskMethod = "workflow.create_image_task";
     public const string TaskStatusMethod = "workflow.task_status";
@@ -34,6 +35,7 @@ public static class HostControlConstants
         CredentialSetMethod,
         CredentialClearMethod,
         HostContextMethod,
+        ListModelsMethod,
         CreateTextTaskMethod,
         CreateImageTaskMethod,
         TaskStatusMethod,

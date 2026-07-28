@@ -149,7 +149,8 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
-        bool requireExistingOperation = false)
+        bool requireExistingOperation = false,
+        string? model = null)
     {
         EnsureCostConfirmed(confirmExternalCost);
         TripoV3Client.ValidatePrompt(prompt);
@@ -157,7 +158,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string canonicalOperationId =
             PaidOperationDescriptor.CanonicalizeOperationId(operationId);
         using IDisposable executionLease = _executionGate.Acquire();
-        string effectiveModel = _apiClient.ResolveEffectiveModel();
+        string effectiveModel = _apiClient.ResolveEffectiveModel(model);
         TextGenerationOptions generationOptions =
             new(prompt, faceLimit, effectiveModel, withMaterials);
         string requestFingerprint;
@@ -223,7 +224,8 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
-        bool requireExistingOperation = false)
+        bool requireExistingOperation = false,
+        string? model = null)
     {
         EnsureCostConfirmed(confirmExternalCost);
         Tripo.Bridge.ImageTransferStore.ValidateDescriptor(image);
@@ -231,7 +233,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string canonicalOperationId =
             PaidOperationDescriptor.CanonicalizeOperationId(operationId);
         using IDisposable executionLease = _executionGate.Acquire();
-        string effectiveModel = _apiClient.ResolveEffectiveModel();
+        string effectiveModel = _apiClient.ResolveEffectiveModel(model);
         ImageGenerationOptions generationOptions =
             new(image, faceLimit, effectiveModel, withMaterials);
         string requestFingerprint;

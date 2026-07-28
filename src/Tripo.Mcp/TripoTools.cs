@@ -89,7 +89,11 @@ public sealed class TripoTools
             "lost response; never replace it merely to retry.")] string operationId,
         [Description(
             "Must be true only after the user explicitly accepts possible external charges.")] bool confirmExternalCost,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        [Description(
+            "Optional Tripo model id (for example v3.1-20260211 or P1-20260311). " +
+            "When omitted, TRIPO_MODEL wins if set; otherwise the catalog default.")]
+            string? model = null) =>
         InvokeAsync(
             () => _workflow.CreateTextTaskAsync(
                 prompt,
@@ -97,7 +101,9 @@ public sealed class TripoTools
                 withMaterials,
                 operationId,
                 confirmExternalCost,
-                cancellationToken),
+                cancellationToken,
+                requireExistingOperation: false,
+                model),
             cancellationToken);
 
     [McpServerTool(
@@ -151,7 +157,11 @@ public sealed class TripoTools
         [Description(
             "Must be true only after the user explicitly accepts possible " +
             "external charges.")] bool confirmExternalCost,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        [Description(
+            "Optional Tripo model id. When omitted, TRIPO_MODEL wins if set; " +
+            "otherwise the catalog default.")]
+            string? model = null) =>
         InvokeAsync(
             () => _workflow.CreateImageTaskAsync(
                 new Tripo.Bridge.StagedImageTransfer(
@@ -163,7 +173,9 @@ public sealed class TripoTools
                 withMaterials,
                 operationId,
                 confirmExternalCost,
-                cancellationToken),
+                cancellationToken,
+                requireExistingOperation: false,
+                model),
             cancellationToken);
 
     [McpServerTool(

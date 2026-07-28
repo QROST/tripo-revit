@@ -4,7 +4,8 @@ public sealed record PreparedTextGeneration(
     string Prompt,
     int FaceLimit,
     bool WithMaterials,
-    string OperationId);
+    string OperationId,
+    string Model = Tripo.Bridge.TripoModelCatalog.DefaultModelId);
 
 public sealed record PreparedObjConversion(
     string SourceTaskId,
@@ -51,7 +52,9 @@ public sealed record TripoPanelState(
     bool ImportDispatchAttempted,
     Tripo.Bridge.HostControlObjTaskImportReceipt? ImportReceipt,
     IReadOnlyList<CompletedObjImport> CompletedImports,
-    string? LastError)
+    string? LastError,
+    IReadOnlyList<Tripo.Bridge.TripoModelInfo>? AvailableModels = null,
+    string? ModelCatalogNote = null)
 {
     public static TripoPanelState Initial { get; } = new(
         Connected: false,
@@ -485,12 +488,16 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 Tripo.Bridge.HostControlCredentialStatusReceipt credentials =
                     await client.GetCredentialStatusAsync(token)
                         .ConfigureAwait(false);
+                Tripo.Bridge.HostControlModelCatalogReceipt modelCatalog =
+                    await client.ListModelsAsync(token).ConfigureAwait(false);
                 _client = client;
                 UpdateState(state => state with
                 {
                     Connected = true,
                     Context = context,
                     CredentialStatus = credentials,
+                    AvailableModels = modelCatalog.Models,
+                    ModelCatalogNote = modelCatalog.Note,
                     PreparedImport = documentChanged
                         ? null
                         : state.PreparedImport,
@@ -561,7 +568,8 @@ public sealed class TripoPanelSession : IAsyncDisposable
     public PreparedTextGeneration PrepareGeneration(
         string prompt,
         int faceLimit,
-        bool withMaterials)
+        bool withMaterials,
+        string? model = null)
     {
         EnterSynchronousMutation();
         try
@@ -569,6 +577,8 @@ public sealed class TripoPanelSession : IAsyncDisposable
             EnsureNoStaleRecovery();
             ValidatePrompt(prompt);
             ValidateFaceLimit(faceLimit);
+            string effectiveModel =
+                Tripo.Bridge.TripoModelCatalog.NormalizeOrDefault(model);
             if (State.HasWorkflowState)
             {
                 throw new InvalidOperationException(
@@ -580,7 +590,8 @@ public sealed class TripoPanelSession : IAsyncDisposable
                 prompt,
                 faceLimit,
                 withMaterials,
-                Guid.NewGuid().ToString("D"));
+                Guid.NewGuid().ToString("D"),
+                effectiveModel);
             UpdateState(state => state with
             {
                 PreparedGeneration = prepared,
@@ -649,7 +660,8 @@ public sealed class TripoPanelSession : IAsyncDisposable
                                     prepared.OperationId,
                                     ConfirmExternalCost: true,
                                     RequireExistingOperation:
-                                        current.GenerationRetryRequired),
+                                        current.GenerationRetryRequired,
+                                    Model: prepared.Model),
                                 token)
                             .ConfigureAwait(false);
                 }
@@ -1067,6 +1079,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
         bool userConfirmedExternalCost,
         string placementMode = "origin",
         bool associateLevel = false,
+        string? model = null,
         IProgress<TripoPipelineProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
@@ -1097,7 +1110,7 @@ public sealed class TripoPanelSession : IAsyncDisposable
                         "Clear the current workflow with New before starting Create.");
                 }
 
-                PrepareGeneration(prompt, faceLimit, withMaterials);
+                PrepareGeneration(prompt, faceLimit, withMaterials, model);
             }
 
             state = State;

@@ -138,7 +138,8 @@ public sealed record HostControlCreateTextTaskRequest
         bool WithMaterials,
         string OperationId,
         bool ConfirmExternalCost,
-        bool RequireExistingOperation = false)
+        bool RequireExistingOperation = false,
+        string? Model = null)
     {
         this.Prompt = Prompt;
         this.FaceLimit = FaceLimit;
@@ -146,6 +147,7 @@ public sealed record HostControlCreateTextTaskRequest
         this.OperationId = OperationId;
         this.ConfirmExternalCost = ConfirmExternalCost;
         this.RequireExistingOperation = RequireExistingOperation;
+        this.Model = Model;
     }
 
     public string Prompt { get; }
@@ -159,6 +161,12 @@ public sealed record HostControlCreateTextTaskRequest
     public bool ConfirmExternalCost { get; }
 
     public bool RequireExistingOperation { get; }
+
+    /// <summary>
+    /// Optional Tripo generation model id. When null/blank, the sidecar uses
+    /// <c>TRIPO_MODEL</c> when set, otherwise the catalog default.
+    /// </summary>
+    public string? Model { get; }
 }
 
 public sealed record HostControlTextTaskCreationReceipt(
@@ -172,7 +180,8 @@ public sealed record HostControlCreateImageTaskRequest(
     bool WithMaterials,
     string OperationId,
     bool ConfirmExternalCost,
-    bool RequireExistingOperation = false);
+    bool RequireExistingOperation = false,
+    string? Model = null);
 
 public sealed record HostControlImageTaskCreationReceipt(
     string OperationId,

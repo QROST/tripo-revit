@@ -19,6 +19,10 @@ public interface ITripoWorkflow
         throw new NotSupportedException(
             "This workflow does not support local image staging.");
 
+    Task<Tripo.Bridge.HostControlModelCatalogReceipt> ListModelsAsync(
+        CancellationToken cancellationToken) =>
+        Task.FromResult(Tripo.Bridge.TripoModelCatalog.CreateReceipt());
+
     Task<TextTaskCreationReceipt> CreateTextTaskAsync(
         string prompt,
         int faceLimit,
@@ -26,7 +30,8 @@ public interface ITripoWorkflow
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
-        bool requireExistingOperation = false);
+        bool requireExistingOperation = false,
+        string? model = null);
 
     Task<ImageTaskCreationReceipt> CreateImageTaskAsync(
         Tripo.Bridge.StagedImageTransfer image,
@@ -35,7 +40,8 @@ public interface ITripoWorkflow
         string operationId,
         bool confirmExternalCost,
         CancellationToken cancellationToken,
-        bool requireExistingOperation = false) =>
+        bool requireExistingOperation = false,
+        string? model = null) =>
         throw new NotSupportedException(
             "This workflow does not support image generation.");
 

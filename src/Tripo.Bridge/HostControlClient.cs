@@ -19,6 +19,10 @@ public interface IHostControlClient
     Task<HostContextReceipt> GetHostContextAsync(
         CancellationToken cancellationToken);
 
+    Task<HostControlModelCatalogReceipt> ListModelsAsync(
+        CancellationToken cancellationToken) =>
+        Task.FromResult(TripoModelCatalog.CreateReceipt());
+
     Task<HostControlTextTaskCreationReceipt> CreateTextTaskAsync(
         HostControlCreateTextTaskRequest request,
         CancellationToken cancellationToken);
@@ -106,6 +110,13 @@ public sealed class HostControlClient : IHostControlClient
         CancellationToken cancellationToken) =>
         CallAsync<object, HostContextReceipt>(
             HostControlConstants.HostContextMethod,
+            new { },
+            cancellationToken);
+
+    public Task<HostControlModelCatalogReceipt> ListModelsAsync(
+        CancellationToken cancellationToken) =>
+        CallAsync<object, HostControlModelCatalogReceipt>(
+            HostControlConstants.ListModelsMethod,
             new { },
             cancellationToken);
 

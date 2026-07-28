@@ -410,7 +410,8 @@ public sealed class TripoWorkflow : ITripoWorkflow
             associateLevel = false;
             warnings.Add(
                 $"associateLevel was requested but import mode resolved to " +
-                $"'{resolvedMode}' on host '{context.Host}'; level association is only " +
+                $"'{resolvedMode}' on host '" +
+                $"{RemoteText.Bound(context.Host, 64, "unknown")}'; level association is only " +
                 "supported for Revit family instances. The import proceeded without " +
                 "associating a level.");
         }

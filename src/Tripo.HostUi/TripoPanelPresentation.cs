@@ -1218,6 +1218,11 @@ public sealed class TripoPanelPresentation
                 warnings.Add("prior mesh material counts unavailable");
             }
 
+            if (GetImportRequestWarnings(state).Length > 0)
+            {
+                warnings.Add("request adjusted");
+            }
+
             string status = FriendlyImportResult(
                 state.ImportReceipt.HostReceipt.TransactionStatus,
                 host);
@@ -1676,6 +1681,11 @@ public sealed class TripoPanelPresentation
                 history.Add(
                     $"• {target} · {completed.Receipt.HostReceipt.CreatedId} · " +
                     completed.Prepared.OperationId);
+                foreach (string warning in
+                         GetImportRequestWarnings(completed.Receipt))
+                {
+                    history.Add($"  Request warning: {warning}");
+                }
             }
 
             return string.Join(Environment.NewLine, history);
@@ -1711,6 +1721,11 @@ public sealed class TripoPanelPresentation
             $"Materials: {receipt.MaterialCount}",
             $"Textures: {receipt.TextureCount}",
         ];
+        foreach (string warning in GetImportRequestWarnings(state))
+        {
+            lines.Add($"Request warning: {warning}");
+        }
+
         MaterialEvidenceKind materialEvidence =
             GetMaterialEvidence(state);
         if (materialEvidence == MaterialEvidenceKind.Missing)
@@ -1745,6 +1760,27 @@ public sealed class TripoPanelPresentation
 
         return string.Join(Environment.NewLine, lines);
     }
+
+    private static string[] GetImportRequestWarnings(
+        TripoPanelState state) =>
+        GetImportRequestWarnings(state.ImportReceipt);
+
+    private static string[] GetImportRequestWarnings(
+        Tripo.Bridge.HostControlObjTaskImportReceipt? receipt) =>
+        (receipt?.Warnings ?? Array.Empty<string>())
+            .Where(
+                static warning =>
+                    !string.IsNullOrWhiteSpace(warning) &&
+                    !warning.Any(
+                        character =>
+                            char.IsControl(character) ||
+                            char.GetUnicodeCategory(character) is
+                                System.Globalization.UnicodeCategory.Format or
+                                System.Globalization.UnicodeCategory.LineSeparator or
+                                System.Globalization.UnicodeCategory.ParagraphSeparator))
+            .Take(8)
+            .Select(BoundText)
+            .ToArray();
 
     private static string FriendlyOperationStatus(string state) =>
         state switch

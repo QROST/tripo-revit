@@ -17,9 +17,9 @@ The copied runtime retains these compatibility identities:
 - panel recovery schema v2;
 - the existing `TripoMCP` local-data root and OS credential identities.
 
-The current runtime has since advanced only the host-control protocol to v3 so
-older sidecars cannot be reused without the credential-rejection recovery
-semantics. The host bridge remains protocol v2.
+The current runtime has since advanced to bridge protocol v3 and host-control
+protocol v7. Older sidecars cannot be reused across those unshimmed protocol
+boundaries; deploy the add-in and sidecar from the same repository revision.
 
 The same runtime snapshot also exists in the initial `tripo-rhino` repository.
 Until both products consume a single versioned runtime or an explicit sync

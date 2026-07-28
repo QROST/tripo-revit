@@ -157,7 +157,7 @@ public sealed class HostControlTests
         Tripo.Bridge.HostControlResponse response =
             await SendRawAsync(descriptor, request);
 
-        Assert.Equal("6", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("7", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.False(response.Ok);
         Assert.Equal("unsupported_protocol", response.Error?.Code);
         Assert.Equal(0, dispatcher.CallCount);
@@ -247,7 +247,7 @@ public sealed class HostControlTests
     }
 
     [Fact]
-    public async Task DiscoveryRejectsLegacyV3Descriptor()
+    public async Task DiscoveryRejectsImmediatelyPreviousV6Descriptor()
     {
         using TemporaryDataRoot dataRoot = new();
         await using Tripo.Bridge.NamedPipeHostControlServer server =
@@ -259,7 +259,7 @@ public sealed class HostControlTests
         Tripo.Bridge.HostControlSessionDescriptor legacy =
             server.Descriptor with
             {
-                ProtocolVersion = "3",
+                ProtocolVersion = "6",
             };
         File.WriteAllText(
             path,
@@ -273,7 +273,7 @@ public sealed class HostControlTests
                 "rhino",
                 Environment.ProcessId));
 
-        Assert.Equal("6", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("7", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.Equal("sidecar_unavailable", exception.Code);
     }
 
@@ -379,6 +379,75 @@ public sealed class HostControlTests
             "documentSessionId",
             serialized,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ImportReceiptWarningsRoundTripOnTheHostControlContract()
+    {
+        const string warning =
+            "associateLevel was downgraded for this import.";
+        Tripo.Bridge.HostControlObjTaskImportReceipt expected = new(
+            Guid.NewGuid().ToString("D"),
+            "task_conversion123",
+            null,
+            new Tripo.Bridge.HostImportReceipt(
+                "rhino",
+                Guid.NewGuid().ToString("D"),
+                Guid.NewGuid().ToString("D"),
+                "created-1",
+                3,
+                1,
+                0,
+                "committed",
+                "mesh",
+                0,
+                0,
+                null),
+            [warning]);
+
+        string serialized = System.Text.Json.JsonSerializer.Serialize(
+            expected,
+            Tripo.Bridge.BridgeJson.Options);
+        Tripo.Bridge.HostControlObjTaskImportReceipt actual =
+            System.Text.Json.JsonSerializer.Deserialize<
+                Tripo.Bridge.HostControlObjTaskImportReceipt>(
+                serialized,
+                Tripo.Bridge.BridgeJson.Options)!;
+
+        Assert.Equal([warning], actual.Warnings);
+    }
+
+    [Fact]
+    public void HostControlV7ImportReceiptRequiresWarningsOnTheWire()
+    {
+        object missingWarnings = new
+        {
+            operationId = Guid.NewGuid().ToString("D"),
+            conversionTaskId = "task_conversion123",
+            conversionCreditsConsumed = (decimal?)null,
+            hostReceipt = new Tripo.Bridge.HostImportReceipt(
+                "rhino",
+                Guid.NewGuid().ToString("D"),
+                Guid.NewGuid().ToString("D"),
+                "created-1",
+                3,
+                1,
+                0,
+                "committed",
+                "mesh",
+                0,
+                0,
+                null),
+        };
+        string serialized = System.Text.Json.JsonSerializer.Serialize(
+            missingWarnings,
+            Tripo.Bridge.BridgeJson.Options);
+
+        Assert.Throws<System.Text.Json.JsonException>(
+            () => System.Text.Json.JsonSerializer.Deserialize<
+                Tripo.Bridge.HostControlObjTaskImportReceipt>(
+                serialized,
+                Tripo.Bridge.BridgeJson.Options));
     }
 
     [Fact]

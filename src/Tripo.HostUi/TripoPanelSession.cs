@@ -56,6 +56,9 @@ public sealed record TripoPanelState(
     IReadOnlyList<Tripo.Bridge.TripoModelInfo>? AvailableModels = null,
     string? ModelCatalogNote = null)
 {
+    private const int MaximumImportWarnings = 8;
+    private const int MaximumImportWarningLength = 512;
+
     public static TripoPanelState Initial { get; } = new(
         Connected: false,
         Busy: false,
@@ -202,6 +205,22 @@ public sealed record TripoPanelState(
             receipt.ConversionCreditsConsumed is < 0)
         {
             return "reported invalid geometry, material, texture, or credit counts";
+        }
+
+        if (receipt.Warnings is null ||
+            receipt.Warnings.Count > MaximumImportWarnings ||
+            receipt.Warnings.Any(
+                warning => string.IsNullOrWhiteSpace(warning) ||
+                           warning.Length > MaximumImportWarningLength ||
+                           warning.Any(
+                               character =>
+                                   char.IsControl(character) ||
+                                   char.GetUnicodeCategory(character) is
+                                       System.Globalization.UnicodeCategory.Format or
+                                       System.Globalization.UnicodeCategory.LineSeparator or
+                                       System.Globalization.UnicodeCategory.ParagraphSeparator)))
+        {
+            return "reported invalid request warnings";
         }
 
         if (expectedMode == "family" &&
@@ -959,12 +978,6 @@ public sealed class TripoPanelSession : IAsyncDisposable
             ValidateName(name);
             string normalizedMode = ValidateImportMode(importMode);
             string normalizedPlacement = ValidatePlacementMode(placementMode);
-            if (associateLevel &&
-                !string.Equals(normalizedMode, "family", StringComparison.Ordinal) &&
-                !string.Equals(normalizedMode, "native", StringComparison.Ordinal))
-            {
-                associateLevel = false;
-            }
 
             TripoPanelState state = State;
             string conversionTaskId = RequireSuccessfulTask(

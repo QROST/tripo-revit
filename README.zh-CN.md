@@ -16,7 +16,7 @@ Generation 与 conversion 不绑定 Revit project，因此同一个 conversion �
 Revit WPF window            MCP client
        ↕ host-control          ↕ stdio
        Tripo.Revit.Mcp sidecar / server ── Tripo v3 HTTPS API
-                    ↕ authenticated protocol-v2 host bridge
+                    ↕ authenticated protocol-v3 host bridge
                  Tripo.Revit add-in
                     ↕ bounded ExternalEvent FIFO + transactions
                  exact active Revit project document
@@ -81,7 +81,7 @@ Revit 2026。
 构建 host project 时，也会构建 matching sidecar，并把完整输出复制到
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`。只有可选 MCP 路径才需要单独的
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` 输出。Bridge protocol v3 与 host-control
-protocol v5 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
+protocol v7 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
 
 ## 安装 Revit add-in
 

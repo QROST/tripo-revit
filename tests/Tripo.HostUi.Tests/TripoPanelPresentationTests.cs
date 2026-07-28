@@ -384,7 +384,11 @@ public sealed class TripoPanelPresentationTests
                             "family",
                             3,
                             1,
-                            @"C:\Tripo\Pavilion.rfa")),
+                            @"C:\Tripo\Pavilion.rfa"),
+                        [
+                            "associateLevel was requested but could not be " +
+                            "applied to this import.",
+                        ]),
             };
 
         Tripo.HostUi.TripoPanelPresentation presentation =
@@ -407,7 +411,13 @@ public sealed class TripoPanelPresentationTests
             @"Saved family: C:\Tripo\Pavilion.rfa",
             presentation.ImportReceiptDetails);
         Assert.Contains(
+            "Request warning: associateLevel was requested",
+            presentation.ImportReceiptDetails);
+        Assert.Contains(
             "2 triangles rejected",
+            presentation.ResultStatus);
+        Assert.Contains(
+            "request adjusted",
             presentation.ResultStatus);
         Assert.True(presentation.ImportEnabled);
         Assert.Equal(
@@ -481,7 +491,8 @@ public sealed class TripoPanelPresentationTests
                             importMode == "family" &&
                             transactionStatus == "committed"
                                 ? @"C:\Tripo\Pavilion.rfa"
-                                : null)),
+                                : null),
+                        []),
             };
 
         Tripo.HostUi.TripoPanelPresentation presentation =
@@ -1117,7 +1128,8 @@ public sealed class TripoPanelPresentationTests
                             "family",
                             0,
                             0,
-                            null)),
+                            null),
+                        []),
             };
 
         Tripo.HostUi.TripoPanelPresentation presentation =

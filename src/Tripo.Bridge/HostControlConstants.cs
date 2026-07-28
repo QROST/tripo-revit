@@ -2,7 +2,7 @@ namespace Tripo.Bridge;
 
 public static class HostControlConstants
 {
-    public const string ProtocolVersion = "6";
+    public const string ProtocolVersion = "7";
     public const string Channel = "host-control";
     public const int MaximumMessageBytes = 64 * 1024;
     public const int MaximumConcurrentClients = 4;

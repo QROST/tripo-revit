@@ -117,6 +117,42 @@ public sealed class HostControlDispatcherTests
     }
 
     [Fact]
+    public async Task ImportWorkflowMethodPreservesWarnings()
+    {
+        const string warning =
+            "associateLevel was downgraded for this import.";
+        FakeWorkflow workflow = new()
+        {
+            ImportWarnings = [warning],
+        };
+        Tripo.Mcp.HostControlDispatcher dispatcher = CreateDispatcher(
+            new FakeCredentialService(),
+            workflow);
+        Tripo.Bridge.HostControlImportObjTaskRequest request = new(
+            "task_conversion123",
+            "Chair",
+            Guid.NewGuid().ToString("D"),
+            Guid.NewGuid().ToString("D"),
+            "mesh",
+            ApplyMaterials: false,
+            AssociateLevel: true);
+
+        object result = await dispatcher.DispatchAsync(
+            Tripo.Bridge.HostControlConstants.ImportObjTaskMethod,
+            Tripo.Bridge.BridgeJson.ToElement(request),
+            CancellationToken.None);
+        Tripo.Bridge.HostControlObjTaskImportReceipt receipt =
+            Assert.IsType<Tripo.Bridge.HostControlObjTaskImportReceipt>(
+                result);
+        string serialized = JsonSerializer.Serialize(
+            receipt,
+            Tripo.Bridge.BridgeJson.Options);
+
+        Assert.Equal([warning], receipt.Warnings);
+        Assert.Contains(warning, serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task InvalidCredentialPayloadReturnsTypedErrorWithoutPayload()
     {
         const string secret = "secret-never-in-error";
@@ -382,6 +418,8 @@ public sealed class HostControlDispatcherTests
 
         public bool ThrowPaidCredentialRejectionOnImage { get; init; }
 
+        public IReadOnlyList<string> ImportWarnings { get; init; } = [];
+
         public Tripo.Bridge.HostControlCreateTextTaskRequest? LastTextRequest
         {
             get;
@@ -591,6 +629,6 @@ public sealed class HostControlDispatcherTests
                         0,
                         0,
                         null),
-                    Array.Empty<string>()));
+                    ImportWarnings));
     }
 }

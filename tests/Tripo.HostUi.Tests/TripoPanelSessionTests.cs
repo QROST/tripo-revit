@@ -1512,6 +1512,46 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
+    public async Task PrepareImportPreservesAssociateLevelForWorkflowDowngrade()
+    {
+        const string warning =
+            "associateLevel was downgraded for this import.";
+        FakeHostControlClient client = new()
+        {
+            ImportWarningsOverride = [warning],
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        session.PrepareGeneration(
+            "a chair",
+            10_000,
+            withMaterials: false);
+        await session.DispatchPreparedGenerationAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshGenerationStatusAsync();
+        session.PrepareConversion(10_000, withMaterials: false);
+        await session.DispatchPreparedConversionAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshConversionStatusAsync();
+
+        Tripo.HostUi.PreparedObjImport prepared =
+            session.PrepareImport(
+                "Chair",
+                "mesh",
+                applyMaterials: false,
+                associateLevel: true);
+
+        Assert.True(prepared.AssociateLevel);
+        await session.ImportPreparedAsync();
+        Assert.True(client.LastImportRequest?.AssociateLevel);
+        Assert.Equal([warning], session.State.ImportReceipt?.Warnings);
+        Assert.Equal(
+            [warning],
+            Assert.Single(session.State.CompletedImports).Receipt.Warnings);
+    }
+
+    [Fact]
     public async Task CompletedConversionImportsIntoTwoDocumentsWithFreshUuids()
     {
         FakeHostControlClient client = new()
@@ -1726,6 +1766,46 @@ public sealed class TripoPanelSessionTests
         Assert.Equal(
             -1,
             session.State.ImportReceipt?.HostReceipt.TriangleCount);
+        Assert.False(session.State.HasConfirmedImportReceipt);
+        Assert.True(session.State.ImportRetryRequired);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("forged\nreceipt line")]
+    public async Task MalformedImportWarningsCannotReportSuccess(
+        string? warning)
+    {
+        FakeHostControlClient client = new()
+        {
+            Host = "revit",
+            ImportWarningsOverride =
+                warning is null ? null : [warning],
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        session.PrepareGeneration(
+            "a pavilion",
+            10_000,
+            withMaterials: true);
+        await session.DispatchPreparedGenerationAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshGenerationStatusAsync();
+        session.PrepareConversion(10_000, withMaterials: true);
+        await session.DispatchPreparedConversionAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshConversionStatusAsync();
+        session.PrepareImport(
+            "Pavilion",
+            "family",
+            applyMaterials: true);
+
+        InvalidOperationException error =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => session.ImportPreparedAsync());
+
+        Assert.Contains("invalid request warnings", error.Message);
         Assert.False(session.State.HasConfirmedImportReceipt);
         Assert.True(session.State.ImportRetryRequired);
     }
@@ -1950,7 +2030,8 @@ public sealed class TripoPanelSessionTests
                     "family",
                     1,
                     1,
-                    @"C:\Tripo\Chair.rfa")),
+                    @"C:\Tripo\Chair.rfa"),
+                []),
         };
         Assert.False(importComplete.CanDispatchPreparedImport);
         Assert.False(importComplete.ImportRetryRequired);
@@ -4239,6 +4320,8 @@ public sealed class TripoPanelSessionTests
 
         public int? ImportTriangleCountOverride { get; set; }
 
+        public IReadOnlyList<string>? ImportWarningsOverride { get; set; } = [];
+
         public int ImportCalls { get; private set; }
 
         public string? LastApiKey { get; private set; }
@@ -4268,6 +4351,9 @@ public sealed class TripoPanelSessionTests
 
         public Tripo.Bridge.HostControlCreateObjConversionRequest?
             LastConversionRequest { get; private set; }
+
+        public Tripo.Bridge.HostControlImportObjTaskRequest?
+            LastImportRequest { get; private set; }
 
         public Task<Tripo.Bridge.HostControlHealthReceipt> GetHealthAsync(
             CancellationToken cancellationToken) =>
@@ -4465,6 +4551,7 @@ public sealed class TripoPanelSessionTests
                 CancellationToken cancellationToken)
         {
             ImportCalls++;
+            LastImportRequest = request;
             if (FailFirstImportResponse && ImportCalls == 1)
             {
                 throw new Tripo.Bridge.HostControlCallException(
@@ -4499,7 +4586,8 @@ public sealed class TripoPanelSessionTests
                         resolvedImportMode == "family"
                             ? SavedFamilyPathOverride ??
                               @"C:\Tripo\created.rfa"
-                            : null)));
+                            : null),
+                    ImportWarningsOverride!));
         }
 
         public Task<Tripo.Bridge.HostControlHealthReceipt> ShutdownAsync(

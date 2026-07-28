@@ -272,7 +272,8 @@ public sealed record HostControlObjTaskImportReceipt(
     string OperationId,
     string ConversionTaskId,
     decimal? ConversionCreditsConsumed,
-    HostImportReceipt HostReceipt);
+    HostImportReceipt HostReceipt,
+    [property: JsonRequired] IReadOnlyList<string> Warnings);
 
 public sealed record HostControlStageObjTaskRequest(
     string ConversionTaskId,

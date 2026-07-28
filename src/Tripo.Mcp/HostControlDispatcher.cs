@@ -332,7 +332,8 @@ internal sealed class HostControlDispatcher :
             receipt.OperationId,
             receipt.ConversionTaskId,
             receipt.ConversionCreditsConsumed,
-            receipt.HostReceipt);
+            receipt.HostReceipt,
+            receipt.Warnings);
     }
 
     private async Task<Tripo.Bridge.HostControlObjTaskStageReceipt>

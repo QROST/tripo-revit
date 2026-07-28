@@ -288,6 +288,85 @@ public sealed class MeshPreparationTests
         Assert.Equal("mtl_invalid", exception.Code);
     }
 
+    [Fact]
+    public void PrepareMatchesTextureCaseInsensitively()
+    {
+        string bundleRoot = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "tripo-case-" + Guid.NewGuid().ToString("N"));
+        Tripo.Bridge.ParsedObjMesh mesh = SingleTriangle(
+            new Tripo.Bridge.MeshPoint3(0, 0, 0),
+            new Tripo.Bridge.MeshPoint3(1, 0, 0),
+            new Tripo.Bridge.MeshPoint3(0, 1, 0),
+            slot: 0,
+            "mat");
+        // MTL references tex.PNG (uppercase extension) while the bundle entry is
+        // tex.png. Case-insensitive matching should resolve to the bundle entry.
+        IReadOnlyList<Tripo.Bridge.ObjMaterial> materials =
+        [
+            new Tripo.Bridge.ObjMaterial("mat", unchecked((int)0xFFFF0000), "tex.PNG"),
+        ];
+        IReadOnlyList<Tripo.Bridge.StagedBundleEntry> entries =
+        [
+            new Tripo.Bridge.StagedBundleEntry("tex.png", new string('a', 64), 10),
+        ];
+
+        Tripo.Bridge.PreparedMesh prepared = Tripo.Bridge.MeshPreparation.Prepare(
+            mesh,
+            "meters",
+            "Z",
+            "right",
+            bundleRoot,
+            materials,
+            entries,
+            applyMaterials: true);
+
+        Tripo.Bridge.PreparedMaterial material = Assert.Single(prepared.Materials);
+        Assert.NotNull(material.DiffuseTextureAbsolutePath);
+        Assert.Equal(
+            System.IO.Path.GetFullPath(System.IO.Path.Combine(bundleRoot, "tex.png")),
+            material.DiffuseTextureAbsolutePath);
+    }
+
+    [Fact]
+    public void PrepareRejectsTextureMissingWithBundleEntryListInMessage()
+    {
+        Tripo.Bridge.ParsedObjMesh mesh = SingleTriangle(
+            new Tripo.Bridge.MeshPoint3(0, 0, 0),
+            new Tripo.Bridge.MeshPoint3(1, 0, 0),
+            new Tripo.Bridge.MeshPoint3(0, 1, 0),
+            slot: 0,
+            "mat");
+        IReadOnlyList<Tripo.Bridge.ObjMaterial> materials =
+        [
+            new Tripo.Bridge.ObjMaterial("mat", null, "truly_missing.png"),
+        ];
+        IReadOnlyList<Tripo.Bridge.StagedBundleEntry> entries =
+        [
+            new Tripo.Bridge.StagedBundleEntry("wood.png", new string('a', 64), 10),
+            new Tripo.Bridge.StagedBundleEntry("bark.jpg", new string('b', 64), 10),
+        ];
+
+        Tripo.Bridge.BridgeCallException exception =
+            Assert.Throws<Tripo.Bridge.BridgeCallException>(
+                () => Tripo.Bridge.MeshPreparation.Prepare(
+                    mesh,
+                    "meters",
+                    "Z",
+                    "right",
+                    System.IO.Path.GetTempPath(),
+                    materials,
+                    entries,
+                    applyMaterials: true));
+
+        Assert.Equal("mtl_invalid", exception.Code);
+        // The message must surface both the MTL reference and the actual bundle
+        // entries so a case-mismatch or rename is diagnosable without a debugger.
+        Assert.Contains("truly_missing.png", exception.Message);
+        Assert.Contains("wood.png", exception.Message);
+        Assert.Contains("bark.jpg", exception.Message);
+    }
+
     private static Tripo.Bridge.PreparedMesh PrepareGeometry(
         Tripo.Bridge.ParsedObjMesh mesh,
         string sourceUnit,

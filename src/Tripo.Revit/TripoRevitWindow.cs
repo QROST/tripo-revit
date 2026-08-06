@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Automation;

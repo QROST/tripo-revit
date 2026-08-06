@@ -4,9 +4,21 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag/version (must match VERSION, e.g. v0.1.0)"
+        required: true
+        type: string
+        default: "v0.1.0"
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   candidate:
@@ -17,6 +29,21 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.0.x
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $requested = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "${{ inputs.version }}".Trim()
+          } else {
+            "${{ github.ref_name }}".Trim()
+          }
+          if (-not $requested) { throw "Version is empty." }
+          if (-not $requested.StartsWith("v", [StringComparison]::OrdinalIgnoreCase)) {
+            $requested = "v$requested"
+          }
+          "tag=$requested" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Output "Using version tag $requested"
       - name: Restore
         run: dotnet restore Tripo.Revit.sln
       - name: Build
@@ -25,13 +52,76 @@ jobs:
         run: dotnet test Tripo.Revit.sln --configuration Release --no-build
       - name: Assemble candidate
         shell: pwsh
-        run: ./packaging/New-ReleaseCandidate.ps1 -Version "${{ github.ref_name }}"
-      - name: Upload candidate
+        run: ./packaging/New-ReleaseCandidate.ps1 -Version "${{ steps.version.outputs.tag }}"
+      - name: Upload candidate artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: tripo-revit-${{ github.ref_name }}
+          name: tripo-revit-${{ steps.version.outputs.tag }}
           path: |
             artifacts/*.zip
             artifacts/*.sha256
           if-no-files-found: error
           retention-days: 14
+      - name: Publish GitHub Pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $isPrerelease = $true
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $isPrerelease = [System.Convert]::ToBoolean("${{ inputs.prerelease }}")
+          }
+
+          $zip = Get-ChildItem -LiteralPath artifacts -Filter "*.zip" | Select-Object -First 1
+          $sha = Get-ChildItem -LiteralPath artifacts -Filter "*.sha256" | Select-Object -First 1
+          if (-not $zip -or -not $sha) {
+            throw "Release assets missing under artifacts/."
+          }
+
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          @'
+          ## Experimental pre-release
+
+          Tripo-Revit community adapter package for Autodesk Revit **2026** (Windows x64).
+
+          This is **not** a production release. Binaries are **unsigned**. There is no installer or automatic update. Real Revit 2026 runtime acceptance remains an open gate; treat this as an experimental install for technical users.
+
+          ### Requirements
+          - Windows x64 + Autodesk Revit 2026
+          - Your own Tripo v3 API key (BYOK); usage is subject to Tripo's terms
+          - .NET 8 runtime for the optional MCP sidecar path
+
+          ### Package contents
+          - `Addins/2026/` — per-user Revit add-in layout (`.addin` + `TripoRevit/` including bundled `sidecar/`)
+          - `mcp/` — optional standalone MCP server output
+          - `README.md` / `README.zh-CN.md` — install and usage
+          - matching `.sha256` checksum sidecar
+
+          ### Install (summary)
+          Close Revit, then copy the `Addins/2026` contents into `%APPDATA%\Autodesk\Revit\Addins\2026\` as documented in the README. Verify the SHA-256 sidecar before installing.
+
+          Not affiliated with or endorsed by Tripo or Autodesk. Licensed under Apache-2.0.
+
+          ## 中文摘要
+          实验性预发布包：仅 Windows x64 + Revit 2026；未签名；无安装器；需自备 Tripo API key；尚未完成正式 Revit 2026 runtime 验收。请按 README 将 `Addins/2026` 拷入 `%APPDATA%\Autodesk\Revit\Addins\2026\`，并先校验 `.sha256`。
+          '@.Replace("          ", "") | Set-Content -LiteralPath $notesPath -Encoding utf8
+
+          gh release view $tag 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip.FullName $sha.FullName --clobber
+            if ($isPrerelease) {
+              gh release edit $tag --prerelease --notes-file $notesPath
+            } else {
+              gh release edit $tag --latest --notes-file $notesPath
+            }
+          } else {
+            $args = @(
+              "release", "create", $tag,
+              $zip.FullName, $sha.FullName,
+              "--title", "Tripo-Revit $tag (experimental)",
+              "--notes-file", $notesPath
+            )
+            if ($isPrerelease) { $args += "--prerelease" }
+            & gh @args
+          }

@@ -161,6 +161,53 @@ public sealed class TripoPanelPresentationTests
     }
 
     [Fact]
+    public void ImageRecoveryFormattingExposesOnlyDurableIdentityEvidence()
+    {
+        const string operationId =
+            "e1e1e1e1-e1e1-41e1-81e1-e1e1e1e1e1e1";
+        const string taskId = "task_image_recovery123";
+        Tripo.HostUi.TripoPanelRecoveryHint hint = new(
+            SchemaVersion:
+                Tripo.HostUi.TripoPanelRecoveryStore.CurrentSchemaVersion,
+            RecoveryId: "image-recovery-id",
+            Host: "revit",
+            OwnerProcessId: 123,
+            OwnerProcessStartedAtUtc: DateTimeOffset.UnixEpoch,
+            UpdatedAtUtc: DateTimeOffset.UnixEpoch,
+            Generation: null,
+            Conversion: null,
+            Import: null,
+            ImageGeneration:
+                new Tripo.HostUi.TripoPanelPaidRecoveryHint(
+                    operationId,
+                    true,
+                    taskId,
+                    "task_id_persisted",
+                    true,
+                    false));
+
+        string formatted =
+            Tripo.HostUi.TripoPanelPresentation.FormatRecoveryHint(hint);
+
+        Assert.Contains(
+            $"Image generation UUID: {operationId}",
+            formatted);
+        Assert.Contains(
+            $"Image generation task ID: {taskId}",
+            formatted);
+        Assert.Contains(
+            "Image generation journal state: task_id_persisted",
+            formatted);
+        Assert.DoesNotContain("StagedImageTransfer", formatted);
+        Assert.DoesNotContain("Transfer ID", formatted);
+        Assert.DoesNotContain("SHA-256", formatted);
+        Assert.DoesNotContain("Image path", formatted);
+        Assert.DoesNotContain("Image URL", formatted);
+        Assert.DoesNotContain("https://", formatted);
+        Assert.DoesNotContain(@"C:\", formatted);
+    }
+
+    [Fact]
     public void InvalidRecoveryFileCannotBeAcknowledgedAfterReview()
     {
         Tripo.HostUi.TripoPanelRecoveryLoadResult recovery =
@@ -659,6 +706,130 @@ public sealed class TripoPanelPresentationTests
         Assert.True(presentation.GenerateEnabled);
         Assert.Equal("Retry same UUID", presentation.GenerateText);
         Assert.Equal(operationId, presentation.LatestPreparedOperationId);
+    }
+
+    [Fact]
+    public void ImageGenerationUsesGenericGenerationEvidenceAndProgress()
+    {
+        const string operationId =
+            "f1f1f1f1-f1f1-41f1-81f1-f1f1f1f1f1f1";
+        const string taskId = "task_image123";
+        const string imageSha256 =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        Tripo.HostUi.TripoPanelState state =
+            ReadyState() with
+            {
+                PreparedImageGeneration =
+                    new Tripo.HostUi.PreparedImageGeneration(
+                        new Tripo.Bridge.StagedImageTransfer(
+                            "12121212-1212-4121-8121-121212121212",
+                            imageSha256,
+                            1_024,
+                            "image/png"),
+                        20_000,
+                        true,
+                        operationId,
+                        "v3"),
+                ImageGenerationDispatchAttempted = true,
+                ImageGenerationReceipt =
+                    new Tripo.Bridge.HostControlImageTaskCreationReceipt(
+                        operationId,
+                        taskId,
+                        "v3",
+                        imageSha256),
+                ImageGenerationOperationStatus =
+                    new Tripo.Bridge.HostControlOperationStatusReceipt(
+                        operationId,
+                        "image_task_creation",
+                        "task_id_persisted",
+                        null,
+                        taskId,
+                        null,
+                        null,
+                        true,
+                        true,
+                        false,
+                        "Refresh the task status.",
+                        DateTimeOffset.UnixEpoch),
+                ImageGenerationStatus =
+                    new Tripo.Bridge.HostControlTaskStatusReceipt(
+                        taskId,
+                        "image_to_model",
+                        "running",
+                        42,
+                        null,
+                        DateTimeOffset.UnixEpoch,
+                        null,
+                        null,
+                        null),
+            };
+
+        Tripo.HostUi.TripoPanelPresentation presentation = Present(state);
+
+        Assert.Equal(operationId, presentation.GenerationOperationId);
+        Assert.Equal(operationId, presentation.LatestPreparedOperationId);
+        Assert.Equal(taskId, presentation.GenerationTaskId);
+        Assert.Equal("Last known · Running · 42%", presentation.GenerationStatus);
+        Assert.Equal(42, presentation.GenerationProgress);
+        Assert.Contains(
+            "Operation kind: image_task_creation",
+            presentation.GenerationDiagnostic);
+        Assert.Contains(
+            "Task type: image_to_model",
+            presentation.GenerationDiagnostic);
+        Assert.True(presentation.RefreshGenerationEnabled);
+        Assert.Contains(
+            "no paid request",
+            presentation.RefreshGenerationHelp);
+        Assert.Equal("Request sent", presentation.GenerateText);
+        Assert.Equal("Generating…", presentation.PipelineStageLabel);
+        Assert.True(presentation.PipelineProgressVisible);
+        Assert.Equal(13, presentation.PipelineProgress);
+    }
+
+    [Fact]
+    public void ImageGenerationRetryUsesThePreparedOperationUuid()
+    {
+        const string operationId =
+            "f2f2f2f2-f2f2-42f2-82f2-f2f2f2f2f2f2";
+        Tripo.HostUi.TripoPanelState state =
+            ReadyState() with
+            {
+                PreparedImageGeneration =
+                    new Tripo.HostUi.PreparedImageGeneration(
+                        new Tripo.Bridge.StagedImageTransfer(
+                            "23232323-2323-4232-8232-232323232323",
+                            new string('b', 64),
+                            2_048,
+                            "image/webp"),
+                        20_000,
+                        false,
+                        operationId),
+                ImageGenerationDispatchAttempted = true,
+                ImageGenerationOperationStatus =
+                    new Tripo.Bridge.HostControlOperationStatusReceipt(
+                        operationId,
+                        "image_task_creation",
+                        "image_file_token_persisted",
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        false,
+                        true,
+                        "Retry the same operation.",
+                        DateTimeOffset.UnixEpoch),
+            };
+
+        Tripo.HostUi.TripoPanelPresentation presentation = Present(state);
+
+        Assert.True(presentation.GenerateEnabled);
+        Assert.Equal("Retry same UUID", presentation.GenerateText);
+        Assert.Equal(operationId, presentation.GenerationOperationId);
+        Assert.Equal(operationId, presentation.LatestPreparedOperationId);
+        Assert.True(presentation.RefreshGenerationEnabled);
     }
 
     [Fact]

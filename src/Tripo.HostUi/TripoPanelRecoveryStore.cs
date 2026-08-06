@@ -35,7 +35,8 @@ public sealed record TripoPanelRecoveryHint(
     DateTimeOffset UpdatedAtUtc,
     TripoPanelPaidRecoveryHint? Generation,
     TripoPanelPaidRecoveryHint? Conversion,
-    TripoPanelImportRecoveryHint? Import);
+    TripoPanelImportRecoveryHint? Import,
+    TripoPanelPaidRecoveryHint? ImageGeneration = null);
 
 public sealed record LoadedTripoPanelRecoveryHint(
     string FileName,
@@ -98,7 +99,7 @@ public sealed record TripoPanelRecoveryLoadResult(
 
 public sealed class TripoPanelRecoveryStore : IDisposable
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
     public const int MaximumRecoveryFileBytes = 16 * 1024;
     public const int MaximumRecoveryFiles = 128;
 
@@ -120,6 +121,20 @@ public sealed class TripoPanelRecoveryStore : IDisposable
     ];
 
     private static readonly HashSet<string> RootProperties =
+    [
+        "schemaVersion",
+        "recoveryId",
+        "host",
+        "ownerProcessId",
+        "ownerProcessStartedAtUtc",
+        "updatedAtUtc",
+        "generation",
+        "conversion",
+        "import",
+        "imageGeneration",
+    ];
+
+    private static readonly HashSet<string> Version3RootProperties =
     [
         "schemaVersion",
         "recoveryId",
@@ -199,6 +214,17 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         TripoPanelPaidRecoveryHint? Generation,
         TripoPanelPaidRecoveryHint? Conversion,
         Version2ImportRecoveryHint? Import);
+
+    private sealed record Version3RecoveryHint(
+        int SchemaVersion,
+        string RecoveryId,
+        string Host,
+        int OwnerProcessId,
+        DateTimeOffset OwnerProcessStartedAtUtc,
+        DateTimeOffset UpdatedAtUtc,
+        TripoPanelPaidRecoveryHint? Generation,
+        TripoPanelPaidRecoveryHint? Conversion,
+        TripoPanelImportRecoveryHint? Import);
 
     private readonly string _host;
     private readonly string _rootDirectory;
@@ -589,6 +615,23 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                     : null),
                 state.GenerationReceipt is not null,
                 state.GenerationOperationStatus);
+        TripoPanelPaidRecoveryHint? imageGeneration =
+            BuildPaidHint(
+                state.PreparedImageGeneration?.OperationId,
+                state.ImageGenerationDispatchAttempted,
+                state.ImageGenerationReceipt?.TaskId ??
+                (state.ImageGenerationOperationStatus is { TaskIdDurable: true }
+                    ? state.ImageGenerationOperationStatus.CreatedTaskId
+                    : null),
+                state.ImageGenerationReceipt is not null,
+                state.ImageGenerationOperationStatus);
+        if (generation is not null && imageGeneration is not null)
+        {
+            throw new InvalidOperationException(
+                "Text and image generation recovery identities cannot both " +
+                "be active.");
+        }
+
         TripoPanelPaidRecoveryHint? conversion =
             BuildPaidHint(
                 state.PreparedConversion?.OperationId,
@@ -599,12 +642,14 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                     : null),
                 state.ConversionReceipt is not null,
                 state.ConversionOperationStatus);
+        TripoPanelPaidRecoveryHint? parentGeneration =
+            generation ?? imageGeneration;
         if (conversion is not null &&
-            (generation?.TaskIdDurable != true ||
-             generation.TaskId is null ||
+            (parentGeneration?.TaskIdDurable != true ||
+             parentGeneration.TaskId is null ||
              !string.Equals(
                  state.PreparedConversion?.SourceTaskId,
-                 generation.TaskId,
+                 parentGeneration.TaskId,
                  StringComparison.Ordinal)))
         {
             throw new InvalidOperationException(
@@ -638,7 +683,10 @@ public sealed class TripoPanelRecoveryStore : IDisposable
                 "The import dispatch has no prepared recovery identity.");
         }
 
-        if (generation is null && conversion is null && import is null)
+        if (generation is null &&
+            imageGeneration is null &&
+            conversion is null &&
+            import is null)
         {
             return null;
         }
@@ -652,7 +700,8 @@ public sealed class TripoPanelRecoveryStore : IDisposable
             DateTimeOffset.UtcNow,
             generation,
             conversion,
-            import);
+            import,
+            imageGeneration);
     }
 
     private static TripoPanelPaidRecoveryHint? BuildPaidHint(
@@ -757,6 +806,17 @@ public sealed class TripoPanelRecoveryStore : IDisposable
             return ReadAndMigrateVersion2(document.RootElement, json);
         }
 
+        if (schemaVersion == 3)
+        {
+            return ReadAndMigrateVersion3(document.RootElement, json);
+        }
+
+        if (schemaVersion != CurrentSchemaVersion)
+        {
+            throw new InvalidDataException(
+                "The recovery hint uses an unsupported schema version.");
+        }
+
         EnsureObjectProperties(
             document.RootElement,
             RootProperties,
@@ -764,6 +824,10 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         EnsureOptionalObjectProperties(
             document.RootElement,
             "generation",
+            PaidProperties);
+        EnsureOptionalObjectProperties(
+            document.RootElement,
+            "imageGeneration",
             PaidProperties);
         EnsureOptionalObjectProperties(
             document.RootElement,
@@ -780,6 +844,46 @@ public sealed class TripoPanelRecoveryStore : IDisposable
             ?? throw new JsonException("The recovery hint is null.");
         ValidateHint(hint);
         return hint;
+    }
+
+    private TripoPanelRecoveryHint ReadAndMigrateVersion3(
+        JsonElement root,
+        string json)
+    {
+        EnsureObjectProperties(
+            root,
+            Version3RootProperties,
+            "version 3 recovery hint");
+        EnsureOptionalObjectProperties(
+            root,
+            "generation",
+            PaidProperties);
+        EnsureOptionalObjectProperties(
+            root,
+            "conversion",
+            PaidProperties);
+        EnsureOptionalObjectProperties(
+            root,
+            "import",
+            ImportProperties);
+        Version3RecoveryHint legacy =
+            JsonSerializer.Deserialize<Version3RecoveryHint>(
+                json,
+                RecoveryJsonOptions)
+            ?? throw new JsonException("The version 3 recovery hint is null.");
+        TripoPanelRecoveryHint migrated = new(
+            CurrentSchemaVersion,
+            legacy.RecoveryId,
+            legacy.Host,
+            legacy.OwnerProcessId,
+            legacy.OwnerProcessStartedAtUtc,
+            legacy.UpdatedAtUtc,
+            legacy.Generation,
+            legacy.Conversion,
+            legacy.Import,
+            ImageGeneration: null);
+        ValidateHint(migrated);
+        return migrated;
     }
 
     private TripoPanelRecoveryHint ReadAndMigrateVersion2(
@@ -827,7 +931,8 @@ public sealed class TripoPanelRecoveryStore : IDisposable
             legacy.UpdatedAtUtc,
             legacy.Generation,
             legacy.Conversion,
-            import);
+            import,
+            ImageGeneration: null);
         ValidateHint(migrated);
         return migrated;
     }
@@ -863,6 +968,7 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         }
 
         if (hint.Generation is null &&
+            hint.ImageGeneration is null &&
             hint.Conversion is null &&
             hint.Import is null)
         {
@@ -871,10 +977,21 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         }
 
         ValidatePaidHint(hint.Generation);
+        ValidatePaidHint(hint.ImageGeneration);
+        if (hint.Generation is not null &&
+            hint.ImageGeneration is not null)
+        {
+            throw new InvalidDataException(
+                "Text and image generation recovery hints cannot both be " +
+                "active.");
+        }
+
         ValidatePaidHint(hint.Conversion);
+        TripoPanelPaidRecoveryHint? parentGeneration =
+            hint.Generation ?? hint.ImageGeneration;
         if (hint.Conversion is not null &&
-            (hint.Generation?.TaskIdDurable != true ||
-             hint.Generation.TaskId is null))
+            (parentGeneration?.TaskIdDurable != true ||
+             parentGeneration.TaskId is null))
         {
             throw new InvalidDataException(
                 "The conversion recovery hint has no durable generation " +
@@ -1300,6 +1417,7 @@ public sealed class TripoPanelRecoveryStore : IDisposable
     private static bool HasCredentialSensitiveOperation(
         LoadedTripoPanelRecoveryHint loaded) =>
         loaded.Hint.Generation is not null ||
+        loaded.Hint.ImageGeneration is not null ||
         loaded.Hint.Conversion is not null ||
         loaded.Hint.Import is { ReceiptKnown: false };
 

@@ -207,7 +207,11 @@ public sealed class TripoPanelPresentation
             state.Busy ||
             !string.IsNullOrWhiteSpace(currentAction);
         bool ready = state.Connected && !uiBusy;
-        bool generationPrepared = state.PreparedGeneration is not null;
+        bool generationPrepared =
+            state.PreparedGeneration is not null ||
+            state.PreparedImageGeneration is not null;
+        bool imageGenerationPrepared =
+            state.PreparedImageGeneration is not null;
         bool generationSucceeded =
             state.HasSuccessfulGeneration;
         bool conversionPrepared = state.PreparedConversion is not null;
@@ -256,10 +260,14 @@ public sealed class TripoPanelPresentation
             state.CredentialStatus?.HasApiKey == true &&
             faceLimitValid &&
             ((!generationPrepared && promptValid) ||
-             (generationPrepared &&
+             (state.PreparedGeneration is not null &&
               state.CanDispatchPreparedGeneration &&
               (!state.GenerationDispatchAttempted ||
-               state.GenerationRetryAllowed)));
+               state.GenerationRetryAllowed)) ||
+             (imageGenerationPrepared &&
+              state.CanDispatchPreparedImageGeneration &&
+              (!state.ImageGenerationDispatchAttempted ||
+               state.ImageGenerationRetryAllowed)));
         bool convertEnabled =
             ready &&
             !recoveryBlocked &&
@@ -309,28 +317,28 @@ public sealed class TripoPanelPresentation
             LatestPreparedOperationId =
                 state.PreparedImport?.OperationId ??
                 state.PreparedConversion?.OperationId ??
-                state.PreparedGeneration?.OperationId,
+                state.CurrentGenerationOperationId,
             GenerationOperationId =
-                state.PreparedGeneration?.OperationId ?? "Not prepared",
+                state.CurrentGenerationOperationId ?? "Not prepared",
             GenerationTaskId = generationTaskId ?? "Not created",
             GenerationStatus = WithRefreshEvidence(
                 StageStatus(
                     generationTaskId,
-                    state.GenerationOperationStatus,
-                    state.GenerationStatus),
+                    state.CurrentGenerationOperationStatus,
+                    state.CurrentGenerationStatus),
                 generationRefreshFailed,
                 generationJournalUpdatedOnFailedRefresh),
             GenerationDiagnostic = WithRefreshDiagnostic(
                 StageDiagnostic(
-                    state.GenerationOperationStatus,
-                    state.GenerationStatus),
+                    state.CurrentGenerationOperationStatus,
+                    state.CurrentGenerationStatus),
                 generationRefreshFailed,
                 generationJournalUpdatedOnFailedRefresh),
             GenerationDiagnosticVisible =
-                state.GenerationOperationStatus is not null ||
-                state.GenerationStatus is not null,
+                state.CurrentGenerationOperationStatus is not null ||
+                state.CurrentGenerationStatus is not null,
             GenerationProgress = VisibleTaskProgress(
-                state.GenerationStatus,
+                state.CurrentGenerationStatus,
                 generationTaskId,
                 generationRefreshFailed),
             ConversionOperationId =
@@ -426,11 +434,15 @@ public sealed class TripoPanelPresentation
             GenerateEnabled = generateEnabled,
             GenerateText = !generationPrepared
                 ? "Generate"
-                : state.GenerationRetryAllowed
+                : state.CurrentGenerationRetryAllowed
                     ? "Retry same UUID"
-                    : state.GenerationRetryRequired
+                    : (imageGenerationPrepared
+                        ? state.ImageGenerationRetryRequired
+                        : state.GenerationRetryRequired)
                         ? "Refresh before retry"
-                        : state.CanDispatchPreparedGeneration
+                        : (imageGenerationPrepared
+                            ? state.CanDispatchPreparedImageGeneration
+                            : state.CanDispatchPreparedGeneration)
                             ? "Send prepared"
                             : "Request sent",
             GenerateHelp = BuildGenerateHelp(
@@ -442,14 +454,18 @@ public sealed class TripoPanelPresentation
             RefreshGenerationEnabled =
                 ready &&
                 (state.GenerationReceipt is not null ||
-                 state.GenerationDispatchAttempted) &&
+                 state.GenerationDispatchAttempted ||
+                 state.ImageGenerationReceipt is not null ||
+                 state.ImageGenerationDispatchAttempted) &&
                 (state.CredentialStatus?.HasApiKey == true ||
                  CanInspectAmbiguousGenerationLocally(state)),
             RefreshGenerationHelp = BuildRefreshHelp(
                 state,
                 uiBusy,
                 state.GenerationReceipt is not null ||
-                state.GenerationDispatchAttempted,
+                state.GenerationDispatchAttempted ||
+                state.ImageGenerationReceipt is not null ||
+                state.ImageGenerationDispatchAttempted,
                 "generation",
                 CanInspectAmbiguousGenerationLocally(state)),
             ConvertEnabled = convertEnabled,
@@ -770,7 +786,9 @@ public sealed class TripoPanelPresentation
             return "Configure a Tripo API key first.";
         }
 
-        if (state.PreparedGeneration is null && !promptValid)
+        if (state.PreparedGeneration is null &&
+            state.PreparedImageGeneration is null &&
+            !promptValid)
         {
             return "Enter a valid model description.";
         }
@@ -780,8 +798,11 @@ public sealed class TripoPanelPresentation
             return "Enter a face limit from 500 through 200000.";
         }
 
-        if (state.GenerationRetryRequired &&
-            !state.GenerationRetryAllowed)
+        bool retryRequired = state.HasImageGenerationState
+            ? state.ImageGenerationRetryRequired
+            : state.GenerationRetryRequired;
+        if (retryRequired &&
+            !state.CurrentGenerationRetryAllowed)
         {
             return "Refresh the existing generation operation before retrying.";
         }
@@ -894,7 +915,7 @@ public sealed class TripoPanelPresentation
             {
                 int? mapped = MapVisibleProgress(
                     VisibleTaskProgress(
-                        state.GenerationStatus,
+                        state.CurrentGenerationStatus,
                         state.DurableGenerationTaskId,
                         generationRefreshFailed),
                     0,
@@ -945,7 +966,7 @@ public sealed class TripoPanelPresentation
         if (state.HasDurableGenerationTask &&
             !state.HasSuccessfulGeneration &&
             VisibleTaskProgress(
-                state.GenerationStatus,
+                state.CurrentGenerationStatus,
                 state.DurableGenerationTaskId,
                 generationRefreshFailed) is int genPct)
         {
@@ -1344,6 +1365,10 @@ public sealed class TripoPanelPresentation
         ArgumentNullException.ThrowIfNull(hint);
         List<string> lines = [];
         AddPaidRecoveryDetails(lines, "Generation", hint.Generation);
+        AddPaidRecoveryDetails(
+            lines,
+            "Image generation",
+            hint.ImageGeneration);
         AddPaidRecoveryDetails(lines, "Conversion", hint.Conversion);
         if (hint.Import is not null)
         {
@@ -1611,9 +1636,13 @@ public sealed class TripoPanelPresentation
 
     private static bool CanInspectAmbiguousGenerationLocally(
         TripoPanelState state) =>
-        state.GenerationDispatchAttempted &&
-        state.GenerationReceipt is null &&
-        state.GenerationOperationStatus?.TaskIdDurable != true;
+        state.HasImageGenerationState
+            ? state.ImageGenerationDispatchAttempted &&
+              state.ImageGenerationReceipt is null &&
+              state.ImageGenerationOperationStatus?.TaskIdDurable != true
+            : state.GenerationDispatchAttempted &&
+              state.GenerationReceipt is null &&
+              state.GenerationOperationStatus?.TaskIdDurable != true;
 
     private static bool CanInspectAmbiguousConversionLocally(
         TripoPanelState state) =>

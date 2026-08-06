@@ -4,6 +4,8 @@ namespace Tripo.HostUi.Tests;
 
 public sealed class TripoPanelSessionTests
 {
+    private static readonly SemaphoreSlim LocalDataEnvironmentGate = new(1, 1);
+
     [Fact]
     public async Task UnconfirmedGenerationMakesNoPaidCallButDisplaysOperationId()
     {
@@ -23,6 +25,265 @@ public sealed class TripoPanelSessionTests
 
         Assert.Equal(prepared.OperationId, session.State.PreparedGeneration?.OperationId);
         Assert.Equal(0, client.CreateTextCalls);
+    }
+
+    [Fact]
+    public async Task UnconfirmedImageGenerationMakesNoPaidCallButKeepsIdentity()
+    {
+        const string imageUrl = "https://images.example.test/chair.png";
+        FakeHostControlClient client = new();
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+
+        Tripo.HostUi.PreparedImageGeneration prepared =
+            await session.PrepareUrlImageGenerationAsync(
+                imageUrl,
+                12_000,
+                withMaterials: true,
+                model: "v2.5-20250123");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => session.DispatchPreparedImageGenerationAsync(
+                userConfirmedExternalCost: false));
+
+        Assert.Equal(1, client.StageImageCalls);
+        Assert.Equal(imageUrl, client.LastStageImageRequest?.ImageUrl);
+        Assert.Equal(
+            prepared.OperationId,
+            session.State.PreparedImageGeneration?.OperationId);
+        Assert.Equal(client.StagedImage, prepared.Image);
+        Assert.Equal(0, client.CreateImageCalls);
+        Assert.True(session.State.HasImageGenerationState);
+        Assert.False(session.State.ImageGenerationDispatchAttempted);
+    }
+
+    [Fact]
+    public async Task ImageGenerationDispatchBindsExactRequestReceiptAndStatus()
+    {
+        FakeHostControlClient client = new();
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        Tripo.HostUi.PreparedImageGeneration prepared =
+            await session.PrepareUrlImageGenerationAsync(
+                "https://images.example.test/pavilion.webp",
+                22_000,
+                withMaterials: true,
+                model: "P1-20260311");
+
+        await session.DispatchPreparedImageGenerationAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshGenerationStatusAsync();
+
+        Tripo.Bridge.HostControlCreateImageTaskRequest request =
+            Assert.IsType<Tripo.Bridge.HostControlCreateImageTaskRequest>(
+                client.LastImageRequest);
+        Assert.Equal(prepared.OperationId, request.OperationId);
+        Assert.Equal(prepared.Image, request.Image);
+        Assert.Equal(22_000, request.FaceLimit);
+        Assert.True(request.WithMaterials);
+        Assert.True(request.ConfirmExternalCost);
+        Assert.False(request.RequireExistingOperation);
+        Assert.Equal("P1-20260311", request.Model);
+        Assert.Equal(
+            prepared.OperationId,
+            session.State.ImageGenerationReceipt?.OperationId);
+        Assert.Equal(
+            prepared.Model,
+            session.State.ImageGenerationReceipt?.Model);
+        Assert.Equal(
+            prepared.Image.Sha256,
+            session.State.ImageGenerationReceipt?.ImageSha256);
+        Assert.Equal(client.ImageTaskId, session.State.DurableGenerationTaskId);
+        Assert.Equal(
+            "image_to_model",
+            session.State.ImageGenerationStatus?.Type);
+        Assert.True(session.State.HasSuccessfulGeneration);
+    }
+
+    [Theory]
+    [InlineData("operation")]
+    [InlineData("model")]
+    [InlineData("sha256")]
+    public async Task ImageGenerationRejectsReceiptIdentityMismatch(
+        string mismatch)
+    {
+        FakeHostControlClient client = new();
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        Tripo.HostUi.PreparedImageGeneration prepared =
+            await session.PrepareUrlImageGenerationAsync(
+                "https://images.example.test/chair.png",
+                10_000,
+                withMaterials: false,
+                model: "v2.5-20250123");
+        if (mismatch == "operation")
+        {
+            client.ImageReceiptOperationIdOverride =
+                Guid.NewGuid().ToString("D");
+        }
+        else if (mismatch == "model")
+        {
+            client.ImageReceiptModelOverride = "v3.0-20250812";
+        }
+        else
+        {
+            client.ImageReceiptSha256Override = new string('b', 64);
+        }
+
+        InvalidOperationException error =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => session.DispatchPreparedImageGenerationAsync(
+                    userConfirmedExternalCost: true));
+
+        Assert.Contains("receipt did not match", error.Message);
+        Assert.Equal(
+            prepared.OperationId,
+            session.State.PreparedImageGeneration?.OperationId);
+        Assert.True(session.State.ImageGenerationDispatchAttempted);
+        Assert.Null(session.State.ImageGenerationReceipt);
+        Assert.True(session.State.HasUnresolvedPaidDispatch);
+    }
+
+    [Fact]
+    public async Task LostImageResponseResumesFileTokenWithTheSameUuid()
+    {
+        FakeHostControlClient client = new()
+        {
+            FailFirstImageResponse = true,
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        Tripo.HostUi.PreparedImageGeneration prepared =
+            await session.PrepareUrlImageGenerationAsync(
+                "https://images.example.test/chair.jpg",
+                10_000,
+                withMaterials: false,
+                model: "v2.5-20250123");
+        client.OperationStatus =
+            ResumableImageOperationStatus(prepared.OperationId);
+
+        await Assert.ThrowsAsync<Tripo.Bridge.HostControlCallException>(
+            () => session.DispatchPreparedImageGenerationAsync(
+                userConfirmedExternalCost: true));
+        InvalidOperationException refresh =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => session.RefreshGenerationStatusAsync());
+
+        Assert.Contains("not durable", refresh.Message);
+        Assert.True(session.State.ImageGenerationRetryAllowed);
+        await session.DispatchPreparedImageGenerationAsync(
+            userConfirmedExternalCost: true);
+        await session.RefreshGenerationStatusAsync();
+
+        Assert.Equal(2, client.CreateImageCalls);
+        Assert.All(
+            client.ImageRequests,
+            request => Assert.Equal(
+                prepared.OperationId,
+                request.OperationId));
+        Assert.False(client.ImageRequests[0].RequireExistingOperation);
+        Assert.True(client.ImageRequests[1].RequireExistingOperation);
+        Assert.Equal(
+            client.StagedImage.Sha256,
+            client.ImageRequests[1].Image.Sha256);
+        Assert.Equal(
+            "image_to_model",
+            session.State.CurrentGenerationStatus?.Type);
+    }
+
+    [Theory]
+    [InlineData("upload")]
+    [InlineData("generation")]
+    public async Task DefinitiveImageCredentialRejectionClearsImageStage(
+        string failureStage)
+    {
+        FakeHostControlClient client = new()
+        {
+            FailFirstImageResponse = true,
+            FirstImageFailureCode =
+                Tripo.Bridge.HostControlConstants.CredentialRejectedError,
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        Tripo.HostUi.PreparedImageGeneration prepared =
+            await session.PrepareUrlImageGenerationAsync(
+                "https://images.example.test/chair.png",
+                10_000,
+                withMaterials: false);
+        client.OperationStatus =
+            RejectedOperationStatus(
+                prepared.OperationId,
+                "image_task_creation") with
+            {
+                FailureStage = failureStage,
+            };
+
+        await Assert.ThrowsAsync<Tripo.Bridge.HostControlCallException>(
+            () => session.DispatchPreparedImageGenerationAsync(
+                userConfirmedExternalCost: true));
+
+        Assert.Null(session.State.PreparedImageGeneration);
+        Assert.False(session.State.ImageGenerationDispatchAttempted);
+        Assert.Null(session.State.ImageGenerationOperationStatus);
+        Assert.False(session.State.HasUnresolvedPaidDispatch);
+        Assert.False(session.State.HasWorkflowState);
+    }
+
+    [Fact]
+    public async Task LocalImagePreparationCleansTransferOnResetAndFailure()
+    {
+        await LocalDataEnvironmentGate.WaitAsync();
+        string root = CreateTemporaryRoot();
+        string? previousRoot = Environment.GetEnvironmentVariable(
+            Tripo.Bridge.BridgePaths.LocalDataEnvironmentVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                Tripo.Bridge.BridgePaths.LocalDataEnvironmentVariable,
+                root);
+            string imagePath = Path.Combine(root, "input.png");
+            await File.WriteAllBytesAsync(
+                imagePath,
+                [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+            await using Tripo.HostUi.TripoPanelSession session =
+                CreateSession(new FakeHostControlClient());
+            await session.ConnectAsync();
+
+            Tripo.HostUi.PreparedImageGeneration prepared =
+                await session.PrepareLocalImageGenerationAsync(
+                    imagePath,
+                    10_000,
+                    withMaterials: false);
+            string transferDirectory =
+                Tripo.Bridge.BridgePaths.GetImageTransferDirectory();
+            string transferPath = Path.Combine(
+                transferDirectory,
+                prepared.Image.TransferId + ".image");
+            Assert.True(File.Exists(transferPath));
+
+            session.ResetWorkflow();
+
+            Assert.False(File.Exists(transferPath));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+                () => session.PrepareLocalImageGenerationAsync(
+                    imagePath,
+                    faceLimit: 0,
+                    withMaterials: false));
+            Assert.Empty(Directory.GetFiles(transferDirectory, "*.image"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                Tripo.Bridge.BridgePaths.LocalDataEnvironmentVariable,
+                previousRoot);
+            Directory.Delete(root, recursive: true);
+            LocalDataEnvironmentGate.Release();
+        }
     }
 
     [Fact]
@@ -1362,6 +1623,8 @@ public sealed class TripoPanelSessionTests
                 State = "outcome_unknown",
                 MayHaveCreatedRemoteTask = true,
                 CanResumeCreation = false,
+                FailureCode = "sidecar_unavailable",
+                FailureMessage = "The provider outcome is unknown.",
                 NextAction = "Do not resend the paid request.",
             };
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -1509,6 +1772,49 @@ public sealed class TripoPanelSessionTests
         Assert.Contains(stages, stage => stage.Contains("Generat"));
         Assert.Contains(stages, stage => stage.Contains("Convert"));
         Assert.Contains(stages, stage => stage.Contains("Import") || stage == "Done");
+    }
+
+    [Fact]
+    public async Task ImagePipelineRunsGenerateConvertAndImportWithoutManualRefresh()
+    {
+        FakeHostControlClient client = new()
+        {
+            Host = "revit",
+        };
+        await using Tripo.HostUi.TripoPanelSession session =
+            CreateSession(client);
+        await session.ConnectAsync();
+        Tripo.HostUi.PreparedImageGeneration prepared =
+            await session.PrepareUrlImageGenerationAsync(
+                "https://images.example.test/pavilion.png",
+                18_000,
+                withMaterials: true,
+                model: "P1-20260311");
+
+        await session.RunPreparedImagePipelineAsync(
+            "Image Pavilion",
+            "family",
+            applyMaterials: true,
+            userConfirmedExternalCost: true,
+            placementMode: "origin",
+            associateLevel: true);
+
+        Assert.Equal(1, client.CreateImageCalls);
+        Assert.Equal(0, client.CreateTextCalls);
+        Assert.Equal(1, client.CreateConversionCalls);
+        Assert.Equal(1, client.ImportCalls);
+        Assert.Equal(
+            prepared.OperationId,
+            client.LastImageRequest?.OperationId);
+        Assert.Equal(
+            client.ImageTaskId,
+            client.LastConversionRequest?.SourceTaskId);
+        Assert.True(session.State.HasSuccessfulGeneration);
+        Assert.True(session.State.HasSuccessfulConversion);
+        Assert.True(session.State.HasConfirmedImportReceipt);
+        Assert.Equal(
+            "image_to_model",
+            session.State.ImageGenerationStatus?.Type);
     }
 
     [Fact]
@@ -2647,6 +2953,114 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
+    public async Task ImageRecoveryHintIsSchemaFourAndUsesImageInspectionStage()
+    {
+        string root = CreateTemporaryRoot();
+        Tripo.HostUi.TripoPanelSession? owner = null;
+        try
+        {
+            const string imageUrl =
+                "https://private.example.test/source-chair.png";
+            FakeHostControlClient ownerClient = new()
+            {
+                FailFirstImageResponse = true,
+            };
+            owner = new Tripo.HostUi.TripoPanelSession(
+                new FakeConnector(ownerClient),
+                new Tripo.HostUi.TripoPanelRecoveryStore("rhino", root));
+            await owner.ConnectAsync();
+            Tripo.HostUi.PreparedImageGeneration prepared =
+                await owner.PrepareUrlImageGenerationAsync(
+                    imageUrl,
+                    10_000,
+                    withMaterials: false,
+                    model: "v2.5-20250123");
+
+            await Assert.ThrowsAsync<Tripo.Bridge.HostControlCallException>(
+                () => owner.DispatchPreparedImageGenerationAsync(
+                    userConfirmedExternalCost: true));
+
+            string file = Assert.Single(
+                Directory.GetFiles(
+                    Path.Combine(root, "ui-recovery", "rhino"),
+                    "*.json"));
+            string json = File.ReadAllText(file);
+            Tripo.HostUi.TripoPanelRecoveryHint hint =
+                System.Text.Json.JsonSerializer.Deserialize<
+                    Tripo.HostUi.TripoPanelRecoveryHint>(
+                    json,
+                    Tripo.Bridge.BridgeJson.Options)
+                ?? throw new InvalidOperationException(
+                    "The image recovery hint could not be read.");
+            Assert.Equal(4, hint.SchemaVersion);
+            Assert.Null(hint.Generation);
+            Assert.Equal(
+                prepared.OperationId,
+                hint.ImageGeneration?.OperationId);
+            Assert.True(hint.ImageGeneration?.DispatchAttempted);
+            Assert.Null(hint.ImageGeneration?.TaskId);
+            Assert.DoesNotContain(imageUrl, json, StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                prepared.Image.TransferId,
+                json,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                prepared.Image.Sha256,
+                json,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "imageUrl",
+                json,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(
+                "transferId",
+                json,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(
+                "mediaType",
+                json,
+                StringComparison.OrdinalIgnoreCase);
+
+            await owner.DisposeAsync();
+            owner = null;
+            MakeRecoveryOwnerStale(root, "rhino");
+            FakeHostControlClient restartedClient = new()
+            {
+                OperationStatus =
+                    ResumableImageOperationStatus(prepared.OperationId),
+            };
+            await using Tripo.HostUi.TripoPanelSession restarted =
+                new(
+                    new FakeConnector(restartedClient),
+                    new Tripo.HostUi.TripoPanelRecoveryStore("rhino", root));
+            Assert.Equal(
+                prepared.OperationId,
+                Assert.Single(restarted.Recovery.Hints)
+                    .Hint.ImageGeneration?.OperationId);
+            await restarted.ConnectAsync();
+
+            Tripo.Bridge.HostControlOperationStatusReceipt inspected =
+                await restarted.InspectPaidRecoveryAsync(
+                    prepared.OperationId,
+                    "image_generation");
+
+            Assert.Equal("image_task_creation", inspected.Kind);
+            Assert.Equal(
+                "image_file_token_persisted",
+                inspected.State);
+        }
+        finally
+        {
+            if (owner is not null)
+            {
+                await owner.DisposeAsync();
+            }
+
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RestartRecoveryBlocksNewPaidWorkUntilExplicitReconciliation()
     {
         string root = CreateTemporaryRoot();
@@ -3721,6 +4135,60 @@ public sealed class TripoPanelSessionTests
     }
 
     [Fact]
+    public void Version3RecoveryMigratesWithNoImageGeneration()
+    {
+        string root = CreateTemporaryRoot();
+        try
+        {
+            const string recoveryId =
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+            const string operationId =
+                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+            string directory =
+                Path.Combine(root, "ui-recovery", "rhino");
+            Directory.CreateDirectory(directory);
+            System.Text.Json.Nodes.JsonObject legacy = new()
+            {
+                ["schemaVersion"] = 3,
+                ["recoveryId"] = recoveryId,
+                ["host"] = "rhino",
+                ["ownerProcessId"] = int.MaxValue,
+                ["ownerProcessStartedAtUtc"] = DateTimeOffset.UnixEpoch,
+                ["updatedAtUtc"] = DateTimeOffset.UtcNow,
+                ["generation"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["operationId"] = operationId,
+                    ["dispatchAttempted"] = true,
+                    ["taskId"] = null,
+                    ["journalState"] = "prepared",
+                    ["taskIdDurable"] = false,
+                    ["canResumeCreation"] = true,
+                },
+                ["conversion"] = null,
+                ["import"] = null,
+            };
+            string path = Path.Combine(directory, recoveryId + ".json");
+            File.WriteAllText(path, legacy.ToJsonString());
+            Tripo.Bridge.BridgePaths.SetPrivateFileMode(path);
+            using Tripo.HostUi.TripoPanelRecoveryStore store =
+                new("rhino", root);
+
+            Tripo.HostUi.LoadedTripoPanelRecoveryHint loaded =
+                Assert.Single(store.LoadStale().Hints);
+
+            Assert.Equal(
+                Tripo.HostUi.TripoPanelRecoveryStore.CurrentSchemaVersion,
+                loaded.Hint.SchemaVersion);
+            Assert.Equal(operationId, loaded.Hint.Generation?.OperationId);
+            Assert.Null(loaded.Hint.ImageGeneration);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Version2RecoveryMovesDocumentSessionToImportAndCanArchive()
     {
         string root = CreateTemporaryRoot();
@@ -4141,6 +4609,38 @@ public sealed class TripoPanelSessionTests
             UpdatedAtUtc: DateTimeOffset.UtcNow);
 
     private static Tripo.Bridge.HostControlOperationStatusReceipt
+        ImageDurableOperationStatus(string operationId, string taskId) =>
+        new(
+            operationId,
+            "image_task_creation",
+            "task_id_persisted",
+            null,
+            taskId,
+            null,
+            null,
+            TaskIdDurable: true,
+            MayHaveCreatedRemoteTask: true,
+            CanResumeCreation: false,
+            NextAction: "Query the durable task ID.",
+            UpdatedAtUtc: DateTimeOffset.UtcNow);
+
+    private static Tripo.Bridge.HostControlOperationStatusReceipt
+        ResumableImageOperationStatus(string operationId) =>
+        new(
+            operationId,
+            "image_task_creation",
+            "image_file_token_persisted",
+            null,
+            null,
+            null,
+            null,
+            TaskIdDurable: false,
+            MayHaveCreatedRemoteTask: false,
+            CanResumeCreation: true,
+            NextAction: "Retry image generation with the same operation ID.",
+            UpdatedAtUtc: DateTimeOffset.UtcNow);
+
+    private static Tripo.Bridge.HostControlOperationStatusReceipt
         RejectedOperationStatus(
             string operationId,
             string kind,
@@ -4245,6 +4745,15 @@ public sealed class TripoPanelSessionTests
 
         public string TextTaskId { get; set; } = "task_source123";
 
+        public bool FailFirstImageResponse { get; set; }
+
+        public string FirstImageFailureCode { get; set; } =
+            "sidecar_unavailable";
+
+        public string? ImageFailureCode { get; set; }
+
+        public string ImageTaskId { get; set; } = "task_image123";
+
         public string ConversionTaskId { get; set; } =
             "task_conversion123";
 
@@ -4258,6 +4767,16 @@ public sealed class TripoPanelSessionTests
         public string? TextReceiptOperationIdOverride { get; set; }
 
         public string? TextReceiptTaskIdOverride { get; set; }
+
+        public string? TextReceiptModelOverride { get; set; }
+
+        public string? ImageReceiptOperationIdOverride { get; set; }
+
+        public string? ImageReceiptTaskIdOverride { get; set; }
+
+        public string? ImageReceiptModelOverride { get; set; }
+
+        public string? ImageReceiptSha256Override { get; set; }
 
         public string? ConversionReceiptFormatOverride { get; set; }
 
@@ -4310,6 +4829,10 @@ public sealed class TripoPanelSessionTests
 
         public int CreateTextCalls { get; private set; }
 
+        public int CreateImageCalls { get; private set; }
+
+        public int StageImageCalls { get; private set; }
+
         public int CreateConversionCalls { get; private set; }
 
         public int ClearApiKeyCalls { get; private set; }
@@ -4348,6 +4871,24 @@ public sealed class TripoPanelSessionTests
 
         public Tripo.Bridge.HostControlCreateTextTaskRequest? LastTextRequest =>
             TextRequests.LastOrDefault();
+
+        public List<Tripo.Bridge.HostControlCreateImageTaskRequest> ImageRequests
+        {
+            get;
+        } = [];
+
+        public Tripo.Bridge.HostControlCreateImageTaskRequest?
+            LastImageRequest => ImageRequests.LastOrDefault();
+
+        public Tripo.Bridge.HostControlStageImageRequest?
+            LastStageImageRequest { get; private set; }
+
+        public Tripo.Bridge.StagedImageTransfer StagedImage { get; set; } =
+            new(
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                new string('a', 64),
+                68,
+                "image/png");
 
         public Tripo.Bridge.HostControlCreateObjConversionRequest?
             LastConversionRequest { get; private set; }
@@ -4445,7 +4986,47 @@ public sealed class TripoPanelSessionTests
                 TextReceiptOperationIdOverride ??
                 request.OperationId,
                 TextReceiptTaskIdOverride ?? TextTaskId,
-                "v3.1-20260211");
+                TextReceiptModelOverride ??
+                request.Model ??
+                Tripo.Bridge.TripoModelCatalog.DefaultModelId);
+        }
+
+        public Task<Tripo.Bridge.StagedImageTransfer> StageImageAsync(
+            Tripo.Bridge.HostControlStageImageRequest request,
+            CancellationToken cancellationToken)
+        {
+            StageImageCalls++;
+            LastStageImageRequest = request;
+            return Task.FromResult(StagedImage);
+        }
+
+        public Task<Tripo.Bridge.HostControlImageTaskCreationReceipt>
+            CreateImageTaskAsync(
+                Tripo.Bridge.HostControlCreateImageTaskRequest request,
+                CancellationToken cancellationToken)
+        {
+            CreateImageCalls++;
+            ImageRequests.Add(request);
+            if (ImageFailureCode is not null ||
+                FailFirstImageResponse && CreateImageCalls == 1)
+            {
+                throw new Tripo.Bridge.HostControlCallException(
+                    ImageFailureCode ?? FirstImageFailureCode,
+                    "The image response was lost.");
+            }
+
+            OperationStatuses[request.OperationId] =
+                ImageDurableOperationStatus(
+                    request.OperationId,
+                    ImageTaskId);
+            return Task.FromResult(
+                new Tripo.Bridge.HostControlImageTaskCreationReceipt(
+                    ImageReceiptOperationIdOverride ?? request.OperationId,
+                    ImageReceiptTaskIdOverride ?? ImageTaskId,
+                    ImageReceiptModelOverride ??
+                    request.Model ??
+                    Tripo.Bridge.TripoModelCatalog.DefaultModelId,
+                    ImageReceiptSha256Override ?? request.Image.Sha256));
         }
 
         public async Task<Tripo.Bridge.HostControlTaskStatusReceipt>
@@ -4465,6 +5046,8 @@ public sealed class TripoPanelSessionTests
                 TaskStatusTypeOverride ??
                 (taskId == TextTaskId
                     ? "text_to_model"
+                    : taskId == ImageTaskId
+                        ? "image_to_model"
                     : "convert_model"),
                 "success",
                 100,

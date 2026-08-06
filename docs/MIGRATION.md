@@ -18,7 +18,7 @@ The copied runtime retains these compatibility identities:
 - the existing `TripoMCP` local-data root and OS credential identities.
 
 The current runtime has since advanced to bridge protocol v3 and host-control
-protocol v7. Older sidecars cannot be reused across those unshimmed protocol
+protocol v8. Older sidecars cannot be reused across those unshimmed protocol
 boundaries; deploy the add-in and sidecar from the same repository revision.
 
 The same runtime snapshot also exists in the initial `tripo-rhino` repository.

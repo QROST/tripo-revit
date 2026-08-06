@@ -4,7 +4,10 @@ public static class BridgeConstants
 {
     public const string ProtocolVersion = "3";
     public const int MaximumMessageBytes = 64 * 1024;
-    public const long MaximumImageTransferBytes = 20_000_000;
+    // The upload guide advertises a 10 MB accepted maximum. Keep local and
+    // remote staging at that conservative provider-bound limit so an image is
+    // rejected before a paid-operation journal can be created.
+    public const long MaximumImageTransferBytes = 10_000_000;
     public const long MaximumArtifactBytes = 128L * 1024 * 1024;
     public const int MaximumBundleFiles = 32;
     public const long MaximumBundleBytes = 256L * 1024 * 1024;

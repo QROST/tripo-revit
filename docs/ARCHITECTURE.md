@@ -5,7 +5,7 @@
 > credential, and local-data compatibility inherited from the `f6300ce`
 > migration snapshot; they do not imply that Rhino source is present here.
 > The current Revit runtime has since advanced to bridge protocol-v3 and
-> host-control protocol-v7.
+> host-control protocol-v8.
 
 Accepted product-direction lock for **dual front doors** (host UI + MCP) and
 **sidecar-only API credentials**:
@@ -57,7 +57,7 @@ The local bridge uses a random process-lifetime pipe name and session token. A r
 
 The bridge accepts a small method allowlist. It never accepts source code, scripts, remote URLs, or arbitrary local paths.
 
-The host-control channel is a separate protocol-v7 named pipe with a distinct
+The host-control channel is a separate protocol-v8 named pipe with a distinct
 random token and descriptor. It is bound to one explicit host PID, allows only
 health, graceful shutdown, credential status/set/clear, and workflow calls, and
 has independent request-size, deadline, and concurrency bounds. A bridge token

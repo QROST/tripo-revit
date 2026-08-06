@@ -69,6 +69,14 @@ public sealed class McpToolSchemaTests
             imageSchema,
             StringComparison.Ordinal);
         Assert.Contains("operationId", imageSchema, StringComparison.Ordinal);
+        Assert.Contains(
+            "tripo_stage_local_image",
+            imageSchema,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "tripo_stage_url_image",
+            imageSchema,
+            StringComparison.Ordinal);
         Assert.True(createImage.ProtocolTool.Annotations?.IdempotentHint);
 
         McpServerTool stageImage = tools.Single(

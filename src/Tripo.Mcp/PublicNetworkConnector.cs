@@ -105,6 +105,12 @@ internal static class PublicNetworkConnector
                 bytes[1] == 0x01 &&
                 bytes[2] == 0x00 &&
                 bytes[3] == 0x00;
+            bool ipv4Compatible = bytes[..12].All(value => value == 0);
+            bool nat64 =
+                bytes[0] == 0x00 &&
+                bytes[1] == 0x64 &&
+                bytes[2] == 0xff &&
+                bytes[3] == 0x9b;
             return !address.Equals(IPAddress.IPv6Any) &&
                    !address.Equals(IPAddress.IPv6None) &&
                    !address.Equals(IPAddress.IPv6Loopback) &&
@@ -114,7 +120,9 @@ internal static class PublicNetworkConnector
                    (bytes[0] & 0xfe) != 0xfc &&
                    !documentationPrefix &&
                    !sixToFour &&
-                   !teredo;
+                   !teredo &&
+                   !ipv4Compatible &&
+                   !nat64;
         }
 
         return false;

@@ -346,6 +346,9 @@ public sealed class ArtifactStagerTests
     [InlineData("2606:4700:4700::1111", true)]
     [InlineData("2002:c0a8:0101::1", false)]
     [InlineData("2001:0000:4136:e378::1", false)]
+    [InlineData("::10.0.0.1", false)]
+    [InlineData("64:ff9b::10.0.0.1", false)]
+    [InlineData("64:ff9b:1::c0a8:101", false)]
     [InlineData("2001:4860:4860::8888", true)]
     public void PublicAddressPolicyIsFailClosed(string value, bool expected)
     {

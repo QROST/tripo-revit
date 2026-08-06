@@ -81,7 +81,7 @@ Revit 2026。
 构建 host project 时，也会构建 matching sidecar，并把完整输出复制到
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`。只有可选 MCP 路径才需要单独的
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` 输出。Bridge protocol v3 与 host-control
-protocol v7 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
+protocol v8 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
 
 ## 安装 Revit add-in
 

@@ -22,24 +22,9 @@ public sealed class RemoteImageStagerTests
         0x01,
     ];
 
-    // Minimal RIFF/WebP container.
-    private static readonly byte[] WebpBytes =
-    [
-        (byte)'R',
-        (byte)'I',
-        (byte)'F',
-        (byte)'F',
-        0x00,
-        0x00,
-        0x00,
-        0x04,
-        (byte)'W',
-        (byte)'E',
-        (byte)'B',
-        (byte)'P',
-        0x00,
-        0x01,
-    ];
+    // A real 1x1 lossy WebP fixture, rather than a marker-only RIFF prefix.
+    private static readonly byte[] WebpBytes = Convert.FromBase64String(
+        "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA==");
 
     private static readonly byte[] GifBytes =
     [
@@ -51,6 +36,18 @@ public sealed class RemoteImageStagerTests
         0x61,
         0x00,
         0x01,
+    ];
+
+    private static readonly byte[] JpegBytes =
+    [
+        0xff,
+        0xd8,
+        0xff,
+        0xe0,
+        0x00,
+        0x02,
+        0x00,
+        0x00,
     ];
 
     [Fact]
@@ -102,12 +99,30 @@ public sealed class RemoteImageStagerTests
         Assert.Equal(WebpBytes.Length, transfer.ByteLength);
     }
 
+    [Fact]
+    public async Task StageUrlImageAsyncStagesJpegByMagicBytes()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(BytesResponse(JpegBytes)));
+        RemoteImageStager stager = new(new HttpClient(handler));
+
+        Tripo.Bridge.StagedImageTransfer transfer =
+            await stager.StageUrlImageAsync(
+                new Uri("https://example.com/image-without-extension"),
+                CancellationToken.None);
+
+        Assert.Equal("image/jpeg", transfer.MediaType);
+        Assert.Equal(JpegBytes.Length, transfer.ByteLength);
+    }
+
     [Theory]
     [InlineData("http://example.com/image.png")] // non-HTTPS
     [InlineData("https://127.0.0.1/image.png")] // IP literal
     [InlineData("https://localhost/image.png")] // localhost
     [InlineData("https://host.local/image.png")] // .local
     [InlineData("https://localhost-dot/example.png")] // no dot in host
+    [InlineData("https://user:password@example.com/image.png")] // credentials
     public async Task StageUrlImageAsyncRejectsDisallowedHosts(string url)
     {
         using TemporaryDataRoot dataRoot = new();
@@ -174,6 +189,106 @@ public sealed class RemoteImageStagerTests
     }
 
     [Fact]
+    public async Task StageUrlImageAsyncRejectsChunkedBodyAboveTheRunningLimit()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        long oversize =
+            Tripo.Bridge.BridgeConstants.MaximumImageTransferBytes + 1;
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(
+                    new PrefixThenZerosStream(PngBytes, oversize)),
+            }));
+        RemoteImageStager stager = new(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<TripoApiException>(
+            () => stager.StageUrlImageAsync(
+                new Uri("https://example.com/chunked.png"),
+                CancellationToken.None));
+
+        AssertNoScratchFiles();
+    }
+
+    [Fact]
+    public async Task StageUrlImageAsyncTimesOutAStalledBodyAndCleansScratch()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new HangingReadStream()),
+            }));
+        RemoteImageStager stager = new(
+            new HttpClient(handler),
+            TimeSpan.FromMilliseconds(50));
+
+        TripoApiException exception = await Assert.ThrowsAsync<TripoApiException>(
+            () => stager.StageUrlImageAsync(
+                new Uri("https://example.com/stalled.png"),
+                CancellationToken.None));
+
+        Assert.Contains("timed out", exception.Message, StringComparison.OrdinalIgnoreCase);
+        AssertNoScratchFiles();
+    }
+
+    [Fact]
+    public async Task StageUrlImageAsyncPropagatesCallerCancellationAndCleansScratch()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new HangingReadStream()),
+            }));
+        RemoteImageStager stager = new(new HttpClient(handler));
+        using CancellationTokenSource cancellation =
+            new(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => stager.StageUrlImageAsync(
+                new Uri("https://example.com/cancelled.png"),
+                cancellation.Token));
+
+        AssertNoScratchFiles();
+    }
+
+    [Fact]
+    public async Task StageUrlImageAsyncWrapsBodyReadFailureAndCleansScratch()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new ThrowingReadStream()),
+            }));
+        RemoteImageStager stager = new(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<TripoApiException>(
+            () => stager.StageUrlImageAsync(
+                new Uri("https://example.com/broken.png"),
+                CancellationToken.None));
+
+        AssertNoScratchFiles();
+    }
+
+    [Fact]
+    public async Task StageUrlImageAsyncRejectsHttpFailureWithoutScratch()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+        RemoteImageStager stager = new(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<TripoApiException>(
+            () => stager.StageUrlImageAsync(
+                new Uri("https://example.com/unavailable.png"),
+                CancellationToken.None));
+
+        AssertNoScratchFiles();
+    }
+
+    [Fact]
     public async Task StageUrlImageAsyncRejectsUnsupportedMagicBytes()
     {
         using TemporaryDataRoot dataRoot = new();
@@ -219,6 +334,85 @@ public sealed class RemoteImageStagerTests
         Assert.Equal(2, handler.CallCount);
     }
 
+    [Fact]
+    public async Task StageUrlImageAsyncRejectsRedirectDowngradeBeforeSecondFetch()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Redirect)
+            {
+                Headers =
+                {
+                    Location = new Uri("http://cdn.example.com/image.png"),
+                },
+            }));
+        RemoteImageStager stager = new(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<TripoApiException>(
+            () => stager.StageUrlImageAsync(
+                new Uri("https://example.com/image.png"),
+                CancellationToken.None));
+
+        Assert.Equal(1, handler.CallCount);
+        AssertNoScratchFiles();
+    }
+
+    [Fact]
+    public async Task StageUrlImageAsyncRejectsMissingRedirectLocation()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Redirect)));
+        RemoteImageStager stager = new(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<TripoApiException>(
+            () => stager.StageUrlImageAsync(
+                new Uri("https://example.com/image.png"),
+                CancellationToken.None));
+
+        Assert.Equal(1, handler.CallCount);
+        AssertNoScratchFiles();
+    }
+
+    [Fact]
+    public async Task StageUrlImageAsyncEnforcesRedirectLimit()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, call) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Redirect)
+            {
+                Headers =
+                {
+                    Location = new Uri(
+                        $"https://cdn{call}.example.com/image.png"),
+                },
+            }));
+        RemoteImageStager stager = new(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<TripoApiException>(
+            () => stager.StageUrlImageAsync(
+                new Uri("https://example.com/image.png"),
+                CancellationToken.None));
+
+        Assert.Equal(4, handler.CallCount);
+        AssertNoScratchFiles();
+    }
+
+    [Fact]
+    public async Task StageUrlImageAsyncRejectsOverlongUrlBeforeFetch()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        DelegateHttpMessageHandler handler = new((_, _) =>
+            Task.FromResult(BytesResponse(PngBytes)));
+        RemoteImageStager stager = new(new HttpClient(handler));
+        Uri uri = new("https://example.com/" + new string('a', 4096));
+
+        await Assert.ThrowsAsync<TripoApiException>(
+            () => stager.StageUrlImageAsync(uri, CancellationToken.None));
+
+        Assert.Equal(0, handler.CallCount);
+    }
+
     private static HttpResponseMessage BytesResponse(byte[] bytes)
     {
         HttpResponseMessage response = new(HttpStatusCode.OK)
@@ -228,6 +422,78 @@ public sealed class RemoteImageStagerTests
         response.Content.Headers.ContentType =
             new MediaTypeHeaderValue("application/octet-stream");
         return response;
+    }
+
+    private static void AssertNoScratchFiles()
+    {
+        string directory =
+            Tripo.Bridge.BridgePaths.GetImageTransferDirectory();
+        Assert.Empty(Directory.EnumerateFiles(directory));
+    }
+
+    private sealed class PrefixThenZerosStream : Stream
+    {
+        private readonly byte[] _prefix;
+        private readonly long _length;
+        private long _position;
+
+        public PrefixThenZerosStream(byte[] prefix, long length)
+        {
+            _prefix = prefix;
+            _length = length;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => _position;
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() { }
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            ReadCore(buffer.AsSpan(offset, count));
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(ReadCore(buffer.Span));
+        }
+
+        private int ReadCore(Span<byte> buffer)
+        {
+            int count = checked((int)Math.Min(buffer.Length, _length - _position));
+            if (count <= 0)
+            {
+                return 0;
+            }
+
+            buffer[..count].Clear();
+            if (_position < _prefix.Length)
+            {
+                int prefixCount = checked((int)Math.Min(
+                    count,
+                    _prefix.Length - _position));
+                _prefix.AsSpan(checked((int)_position), prefixCount)
+                    .CopyTo(buffer);
+            }
+
+            _position += count;
+            return count;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) =>
+            throw new NotSupportedException();
+        public override void SetLength(long value) =>
+            throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new NotSupportedException();
     }
 
     // A stream that reports a fixed length and returns zero bytes on read,

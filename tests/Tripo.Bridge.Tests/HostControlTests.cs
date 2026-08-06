@@ -51,6 +51,47 @@ public sealed class HostControlTests
     }
 
     [Fact]
+    public async Task AuthenticatedWorkflowClientRoundTripsImageContracts()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        ImageWorkflowDispatcher dispatcher = new();
+        await using Tripo.Bridge.NamedPipeHostControlServer server = new(
+            "rhino",
+            Environment.ProcessId,
+            [
+                Tripo.Bridge.HostControlConstants.StageImageMethod,
+                Tripo.Bridge.HostControlConstants.CreateImageTaskMethod,
+            ],
+            dispatcher);
+        await server.StartAsync();
+        Tripo.Bridge.HostControlClient client = new(
+            "rhino",
+            Environment.ProcessId,
+            TimeSpan.FromSeconds(5));
+        Uri imageUri = new("https://images.example.com/chair.webp");
+
+        Tripo.Bridge.StagedImageTransfer staged = await client.StageImageAsync(
+            new Tripo.Bridge.HostControlStageImageRequest(imageUri.ToString()),
+            CancellationToken.None);
+        string operationId = Guid.NewGuid().ToString("D");
+        Tripo.Bridge.HostControlImageTaskCreationReceipt created =
+            await client.CreateImageTaskAsync(
+                new Tripo.Bridge.HostControlCreateImageTaskRequest(
+                    staged,
+                    10_000,
+                    WithMaterials: true,
+                    operationId,
+                    ConfirmExternalCost: true),
+                CancellationToken.None);
+
+        Assert.Equal(imageUri.ToString(), dispatcher.LastImageUrl);
+        Assert.Equal(staged, dispatcher.LastCreateRequest?.Image);
+        Assert.Equal(operationId, created.OperationId);
+        Assert.Equal("task_image123", created.TaskId);
+        Assert.Equal(staged.Sha256, created.ImageSha256);
+    }
+
+    [Fact]
     public async Task WrongTokenIsRejectedWithoutDispatch()
     {
         using TemporaryDataRoot dataRoot = new();
@@ -157,7 +198,7 @@ public sealed class HostControlTests
         Tripo.Bridge.HostControlResponse response =
             await SendRawAsync(descriptor, request);
 
-        Assert.Equal("7", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("8", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.False(response.Ok);
         Assert.Equal("unsupported_protocol", response.Error?.Code);
         Assert.Equal(0, dispatcher.CallCount);
@@ -247,7 +288,7 @@ public sealed class HostControlTests
     }
 
     [Fact]
-    public async Task DiscoveryRejectsImmediatelyPreviousV6Descriptor()
+    public async Task DiscoveryRejectsImmediatelyPreviousV7Descriptor()
     {
         using TemporaryDataRoot dataRoot = new();
         await using Tripo.Bridge.NamedPipeHostControlServer server =
@@ -259,7 +300,7 @@ public sealed class HostControlTests
         Tripo.Bridge.HostControlSessionDescriptor legacy =
             server.Descriptor with
             {
-                ProtocolVersion = "6",
+                ProtocolVersion = "7",
             };
         File.WriteAllText(
             path,
@@ -273,7 +314,7 @@ public sealed class HostControlTests
                 "rhino",
                 Environment.ProcessId));
 
-        Assert.Equal("7", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("8", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.Equal("sidecar_unavailable", exception.Code);
     }
 
@@ -613,6 +654,60 @@ public sealed class HostControlTests
                     null,
                     null,
                     null);
+            }
+
+            throw new Tripo.Bridge.HostControlCallException(
+                "method_not_allowed",
+                "Unexpected test method.");
+        }
+    }
+
+    private sealed class ImageWorkflowDispatcher :
+        Tripo.Bridge.IHostControlDispatcher
+    {
+        private static readonly Tripo.Bridge.StagedImageTransfer StagedImage = new(
+            "11111111-1111-1111-1111-111111111111",
+            new string('a', 64),
+            64,
+            "image/webp");
+
+        public string? LastImageUrl { get; private set; }
+
+        public Tripo.Bridge.HostControlCreateImageTaskRequest? LastCreateRequest
+        {
+            get;
+            private set;
+        }
+
+        public Task<object> DispatchAsync(
+            string method,
+            System.Text.Json.JsonElement payload,
+            CancellationToken cancellationToken)
+        {
+            if (method == Tripo.Bridge.HostControlConstants.StageImageMethod)
+            {
+                Tripo.Bridge.HostControlStageImageRequest request =
+                    System.Text.Json.JsonSerializer.Deserialize<
+                        Tripo.Bridge.HostControlStageImageRequest>(
+                            payload,
+                            Tripo.Bridge.BridgeJson.Options)!;
+                LastImageUrl = request.ImageUrl;
+                return Task.FromResult<object>(StagedImage);
+            }
+
+            if (method == Tripo.Bridge.HostControlConstants.CreateImageTaskMethod)
+            {
+                LastCreateRequest =
+                    System.Text.Json.JsonSerializer.Deserialize<
+                        Tripo.Bridge.HostControlCreateImageTaskRequest>(
+                            payload,
+                            Tripo.Bridge.BridgeJson.Options)!;
+                return Task.FromResult<object>(
+                    new Tripo.Bridge.HostControlImageTaskCreationReceipt(
+                        LastCreateRequest.OperationId,
+                        "task_image123",
+                        Tripo.Bridge.TripoModelCatalog.DefaultModelId,
+                        LastCreateRequest.Image.Sha256));
             }
 
             throw new Tripo.Bridge.HostControlCallException(

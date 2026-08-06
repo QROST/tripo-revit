@@ -176,9 +176,15 @@ public sealed class TripoTools
         "checkpointed separately. Reuse the same operationId and exact descriptor " +
         "after a lost response; this remote task may consume credits.")]
     public Task<ImageTaskCreationReceipt> CreateImageTaskAsync(
-        [Description("Opaque UUID returned by tripo_stage_local_image.")] string transferId,
-        [Description("SHA-256 returned by tripo_stage_local_image.")] string sha256,
-        [Description("Exact byte length returned by tripo_stage_local_image.")] long byteLength,
+        [Description(
+            "Opaque UUID returned by tripo_stage_local_image or " +
+            "tripo_stage_url_image.")] string transferId,
+        [Description(
+            "SHA-256 returned by tripo_stage_local_image or " +
+            "tripo_stage_url_image.")] string sha256,
+        [Description(
+            "Exact byte length returned by tripo_stage_local_image or " +
+            "tripo_stage_url_image.")] long byteLength,
         [Description("image/png, image/jpeg, or image/webp as returned by staging.")] string mediaType,
         [Description("Maximum mesh face count from 500 through 200000.")] int faceLimit,
         [Description(

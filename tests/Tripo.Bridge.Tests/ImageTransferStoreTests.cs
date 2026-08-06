@@ -32,25 +32,9 @@ public sealed class ImageTransferStoreTests
         0x00,
     ];
 
-    // Minimal RIFF container: "RIFF" + 4 size bytes + "WEBP". The size field is
-    // arbitrary for detection (only the markers at offsets 0-3 and 8-11 matter).
-    private static readonly byte[] WebpBytes =
-    [
-        (byte)'R',
-        (byte)'I',
-        (byte)'F',
-        (byte)'F',
-        0x00,
-        0x00,
-        0x00,
-        0x04,
-        (byte)'W',
-        (byte)'E',
-        (byte)'B',
-        (byte)'P',
-        0x00,
-        0x01,
-    ];
+    // A real 1x1 lossy WebP fixture, rather than a marker-only RIFF prefix.
+    private static readonly byte[] WebpBytes = Convert.FromBase64String(
+        "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89WAAAAA==");
 
     [Fact]
     public async Task StageAndOpenVerifiedAsyncRoundTripsOpaquePng()

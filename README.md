@@ -92,7 +92,7 @@ Building the host project also builds the matching sidecar and copies its
 complete output into
 `src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`. The separate
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` output is needed only for the optional MCP
-path. Bridge protocol v3 and host-control protocol v7 have no
+path. Bridge protocol v3 and host-control protocol v8 have no
 backward-compatibility shim, so deploy all components from the same repository
 revision.
 

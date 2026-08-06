@@ -14,6 +14,7 @@ public interface IRemoteImageStager
 public sealed class RemoteImageStager : IRemoteImageStager
 {
     private const int MaximumRedirects = 3;
+    private const int MaximumImageUrlLength = 4096;
     private static readonly TimeSpan DefaultDownloadTimeout =
         TimeSpan.FromMinutes(2);
 
@@ -77,8 +78,8 @@ public sealed class RemoteImageStager : IRemoteImageStager
         }
     }
 
-    // Downloads to outputPath while running an IncrementalHash so the first
-    // bytes can be inspected afterward to choose a content-proven extension.
+    // Downloads to outputPath while retaining only the first signature bytes
+    // needed to choose a content-proven extension.
     // The extension is derived strictly from magic bytes; a Content-Type
     // header is never trusted on its own.
     private async Task<string> DownloadDetectingExtensionAsync(
@@ -301,6 +302,7 @@ public sealed class RemoteImageStager : IRemoteImageStager
     private static void ValidateRemoteUri(Uri uri)
     {
         if (!uri.IsAbsoluteUri ||
+            uri.OriginalString.Length > MaximumImageUrlLength ||
             !string.Equals(
                 uri.Scheme,
                 Uri.UriSchemeHttps,
@@ -310,7 +312,7 @@ public sealed class RemoteImageStager : IRemoteImageStager
         {
             throw new TripoApiException(
                 "Remote image downloads must use an absolute HTTPS URL without " +
-                "user information.");
+                "user information and within the URL length limit.");
         }
 
         if (IPAddress.TryParse(uri.Host, out _) ||

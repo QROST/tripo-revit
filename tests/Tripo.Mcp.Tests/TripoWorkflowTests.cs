@@ -148,6 +148,39 @@ public sealed class TripoWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task RemoteUrlStageFeedsExactDescriptorIntoImageCreation()
+    {
+        Uri imageUri = new("https://images.example.com/chair.webp");
+        Tripo.Bridge.StagedImageTransfer stagedImage = ImageTransfer();
+        FakeRemoteImageStager remoteStager = new(stagedImage);
+        FakeApiClient api = new();
+        Tripo.Mcp.TripoWorkflow workflow = CreateWorkflow(
+            api,
+            new FakeArtifactStager(),
+            new FakeHostConnection(),
+            remoteImageStager: remoteStager);
+
+        Tripo.Bridge.StagedImageTransfer descriptor =
+            await workflow.StageUrlImageAsync(imageUri, CancellationToken.None);
+        Tripo.Mcp.ImageTaskCreationReceipt receipt =
+            await workflow.CreateImageTaskAsync(
+                descriptor,
+                10_000,
+                withMaterials: true,
+                Guid.NewGuid().ToString("D"),
+                confirmExternalCost: true,
+                CancellationToken.None);
+
+        Assert.Same(stagedImage, descriptor);
+        Assert.Equal(imageUri, remoteStager.LastUri);
+        Assert.Equal(1, remoteStager.CallCount);
+        Assert.Equal("task_image123", receipt.TaskId);
+        Assert.Equal(stagedImage.Sha256, receipt.ImageSha256);
+        Assert.Equal(1, api.ImageUploadCalls);
+        Assert.Equal(1, api.ImageGenerationCalls);
+    }
+
+    [Fact]
     public async Task TextCreationReturnsPaidTaskIdWithoutPolling()
     {
         FakeApiClient api = new();
@@ -1219,7 +1252,8 @@ public sealed class TripoWorkflowTests : IDisposable
         FakeApiClient api,
         FakeArtifactStager stager,
         FakeHostConnection host,
-        Tripo.Bridge.ICredentialWorkflowExecutionGate? executionGate = null) =>
+        Tripo.Bridge.ICredentialWorkflowExecutionGate? executionGate = null,
+        Tripo.Mcp.IRemoteImageStager? remoteImageStager = null) =>
         new(
             api,
             stager,
@@ -1231,7 +1265,8 @@ public sealed class TripoWorkflowTests : IDisposable
                 TimeSpan.FromMilliseconds(2),
                 MaximumReadRetries: 1),
             timeProvider: null,
-            executionGate: executionGate);
+            executionGate: executionGate,
+            remoteImageStager: remoteImageStager);
 
     private static Tripo.Mcp.TripoTaskSnapshot Success(
         string taskId,
@@ -1522,6 +1557,27 @@ public sealed class TripoWorkflowTests : IDisposable
                     MtlEntry,
                     entries,
                     "/not-used-in-fake"));
+        }
+    }
+
+    private sealed class FakeRemoteImageStager : Tripo.Mcp.IRemoteImageStager
+    {
+        private readonly Tripo.Bridge.StagedImageTransfer _result;
+
+        public FakeRemoteImageStager(Tripo.Bridge.StagedImageTransfer result) =>
+            _result = result;
+
+        public int CallCount { get; private set; }
+
+        public Uri? LastUri { get; private set; }
+
+        public Task<Tripo.Bridge.StagedImageTransfer> StageUrlImageAsync(
+            Uri imageUri,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            LastUri = imageUri;
+            return Task.FromResult(_result);
         }
     }
 

@@ -11,10 +11,10 @@ Accepted product-direction lock for **dual front doors** (host UI + MCP) and
 **sidecar-only API credentials**:
 [`ADR-0001`](./adr/0001-dual-front-doors-and-sidecar-credentials.md).
 Implementation status: the shared workflow seam, authenticated host-control
-sidecar mode, sidecar-owned credentials, and Revit WPF window implement the
-**text-to-3D** portion of Phases 0–2. Source also implements local PNG/JPEG
-staging and multi-stage image-to-3D creation for MCP. The Revit window remains
-text-only. Portable tests and package compilation are separate evidence
+sidecar mode, sidecar-owned credentials, and Revit WPF window implement text,
+local-image, and public-HTTPS-image generation through Phases 0–2. The shared
+image boundary accepts PNG/JPEG/WebP and uses the same multi-stage paid journal
+for the panel and MCP. Portable tests and package compilation are separate evidence
 classes; real Revit loading and interactive acceptance remain a separate gate.
 
 ## Trust boundaries
@@ -77,12 +77,18 @@ Materials and the final import-or-value target are explicit choices:
    - **text:** generate a UUID, persist `Prepared`, then persist `Dispatching`
      before one Tripo v3 text-to-model POST. `withMaterials=true` sends
      `texture=true, pbr=true` (`auto_size=true`, `quad=false`);
-   - **local image:** validate and privately snapshot one 1–20,000,000-byte
-     PNG/JPEG under `image-transfers/`, then generate a UUID. Persist
+   - **local image:** validate and privately snapshot one 1–10,000,000-byte
+     PNG/JPEG/WebP under `image-transfers/`, then generate a UUID. Persist
      `Prepared`, `ImageUploadDispatching`, a valid `file_token`, and
      `ImageGenerationDispatching` as distinct checkpoints around the upload and
      image-to-model POSTs. The upload uses a generic filename; neither source
-     path nor filename crosses the protocol.
+     path nor filename crosses the protocol;
+   - **image URL:** send one HTTPS URL only to the host-control stage method.
+     The sidecar applies bounded public-network-only fetch and redirect checks,
+     snapshots the byte-proven PNG/JPEG/WebP into the same opaque transfer
+     store, and then follows the identical image journal sequence. The URL is
+     not part of the paid request, descriptor, journal, receipt, or recovery
+     hint.
 3. Persist the valid generation task ID before returning it; recover it with the
    same UUID or `tripo_operation_status` if the response is lost.
 4. Poll that task through the separate read-only task-status tool.
@@ -195,16 +201,18 @@ which is an environmental limit, not an error.
 
 ## Panel crash-recovery hints
 
-`Tripo.HostUi` writes a private, non-authoritative recovery hint before a
-generation, conversion, or import dispatch can leave the panel process. The
+`Tripo.HostUi` writes a private, non-authoritative schema-v4 recovery hint before
+a generation, conversion, or import dispatch can leave the panel process. The
 file is
 `<data root>/ui-recovery/<host>/<recovery-id>.json`, written through a
 same-directory temporary file and atomic replace. It contains canonical
-operation IDs, durable task IDs when known, journal state, and only the bounded
+operation IDs, a mutually exclusive text/image generation slot, durable task
+IDs when known, journal state, and only the bounded
 name/mode/material fields and target session required to identify an import
 retry. A document session is never attached to generation or conversion
-recovery. The hint excludes the prompt, credential, Authorization header, URL,
-fingerprint, artifact path, and host document path. Each panel session owns a
+recovery. The hint excludes the staged-image descriptor, source path, filename,
+bytes, prompt, credential, Authorization header, URL, fingerprint, artifact
+path, and host document path. Each panel session owns a
 distinct recovery ID, so multiple panels cannot overwrite each other. The hint
 remains through a successful import and is removed only by an explicit
 live-workflow reset or archived after recovered reconciliation.
@@ -340,7 +348,7 @@ Protocol and parser tests, package compilation, packaged-sidecar process
 handshakes, native secret-store canaries, real host runtime, installer behavior,
 and visual/material fidelity are separate evidence classes. A passing portable
 test suite does not claim that Rhino, Grasshopper, or Revit loaded the binaries.
-The current source tree implements local PNG/JPEG upload/image creation for MCP
-and Grasshopper plus a text-only Eto/Revit panel slice. It does not implement
-panel image controls, WebP/public-URL input, a Yak package, or a signed
-installer.
+The current source tree implements local PNG/JPEG/WebP and public-HTTPS image
+staging for MCP and the Revit WPF panel, plus the shared image generation
+pipeline. It does not claim a Windows/Revit runtime acceptance pass, a Yak
+package, or a signed installer.

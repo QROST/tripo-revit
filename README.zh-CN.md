@@ -229,8 +229,8 @@ store，MCP 则使用 client secret/environment 机制。
 只在 MCP client 中设置该变量会让 server 与 Revit 使用不同的 discovery/staging
 roots，无法建立正确的 bridge 连接。
 
-`image-transfers` 可能暂存由 MCP 选择的 PNG/JPEG 私有 snapshot，直到 file-token 或
-upload-ambiguity checkpoint 持久化。恢复期间应与 paid-operation journal 一起保留。
+`image-transfers` 可能短暂保存由 panel/MCP 选择，或 sidecar 从已校验 public HTTPS
+URL 下载的 PNG/JPEG/WebP 私有 snapshot。恢复期间应与 paid-operation journal 一起保留。
 
 ## 使用 Revit window
 
@@ -238,22 +238,15 @@ upload-ambiguity checkpoint 持久化。恢复期间应与 paid-operation journa
    **Add-Ins → Tripo → Tripo 3D**。重复点击会激活同一个 modeless window。
    window 仍持有 workflow state 时，点击关闭按钮只会隐藏它，不会丢弃 session；
    再次使用 ribbon command 即可显示。
-2. window 会自动连接 active project；也可以点击 **Connect / Refresh** 显式刷新。
-   Generation 与 conversion state 会跨 project switch 保留；只有 import UUID
-   绑定当前 target，且 import dispatch 结果未决时才禁止切换 target。
-3. 若没有可用 key，在 **API key…** 粘贴 key，并选择 persistent 或 session-only
-   storage。可在 [Tripo Platform](https://platform.tripo3d.ai/api-keys) 创建 key。
-4. 输入 prompt、face limit 与材质选项，然后点击 **Generate**。window 会先显示
-   可选择复制的 durable operation UUID，再显示 credit confirmation；拒绝确认不会
-   发送付费请求。
-5. 点击 **Refresh generation**，直到 task 为 `success`。
-6. 点击 **Convert to OBJ**。该阶段使用另一个 UUID 与第二次独立费用确认；
-   刷新 conversion 直到成功。
-7. 选择 **Revit family（推荐）** 或 **DirectShape mesh**，填写 object name，
-   并选择是否尝试应用 OBJ bundle 中的 baked materials，然后点击
-   显示 active target project 名称的 import button。最终 receipt 会报告实际创建的
-   element、material 与 texture 数量；请求应用材质不等于声称 bundle 中确实存在材质。
-   激活另一个可写 project 并 reconnect 后，可用新的 import UUID 再次导入同一 conversion。
+2. window 自动连接 active project。选择 **Text**、**Local image** 或
+   **Image URL**；输入 prompt、选择 PNG/JPEG/WebP，或填写一个 public HTTPS URL。
+   本地预览使用内存 snapshot 并关闭源文件；WPF 不直接抓取 URL 预览。
+3. 点击 **Create in Revit**。一次明确费用确认覆盖 generation 与 OBJ conversion；
+   panel 自动轮询、转换并导入，并在同一进度条显示 Generating → Converting → Importing。
+4. 若没有可用 key，Create 会打开 API-key dialog；也可在 **Settings** 中配置。
+5. **Settings** 可选择 model、face limit、材质、object name、Family/DirectShape、
+   project origin/pick point，以及 Family 的 nearest-level association。
+6. **Advanced** 保留逐阶段 Refresh/Generate/Convert/Import、恢复工具与可复制 UUID。
 
 modeless window 不直接访问 `Document` 或 `UIApplication`；context 与 mutation 仍
 沿 sidecar → host bridge → bounded `ExternalEvent` 执行。它不自动轮询，也不声称能
@@ -303,8 +296,8 @@ status。只要任一项发生变化，最终操作就会被拒绝，刷新后�
 inspection。inspection 失败会明确显示 **Manual review required**，并要求额外勾选
 failure review。无效、超限、未知 schema 或 symlink hint 会继续阻塞，等待人工检查；
 自定义 Windows data root 必须保持 current-user-only ACL。paid-operation journal
-才是 authority，hint 不是。Revit window 仍然只支持 text-to-3D；本地图生功能目前由
-可选 MCP tools 提供。
+才是 authority，hint 不是。Revit window 与 MCP 都支持 text、本地图片和 public
+HTTPS 图片 URL；真实 Revit 与付费 provider acceptance 仍是独立 gate。
 
 ## 启动并验证 MCP
 
@@ -314,7 +307,7 @@ failure review。无效、超限、未知 schema 或 symlink hint 会继续阻�
 2. 启动 Revit 2026。
 3. 打开要接收模型的可写 project。
 4. 启动或重启 MCP client，让 server 收到预期环境。
-5. 确认 client 列出下文八个 tools。
+5. 确认 client 列出下文九个 tools。
 6. 调用 `tripo_host_context`。
 
 成功的 context receipt 证明 MCP server 已经连接到 Revit，并返回：
@@ -335,16 +328,17 @@ MCP server。
 
 ## MCP 工具
 
-MCP 入口通过以下八个 tools 暴露同一套 shared workflow：
+MCP 入口通过以下九个 tools 暴露同一套 shared workflow：
 
 | 工具 | 主要参数 | 作用 |
 | --- | --- | --- |
 | `tripo_host_context` | 无 | 读取已连接 Revit 进程与精确 active-document session；不调用 Tripo API。 |
 | `tripo_task_status` | `taskId` | 查询一个已有 Tripo task。 |
 | `tripo_operation_status` | `operationId` | 读取一条持久化的本地 paid-operation record；不调用 Tripo 或 Revit。 |
-| `tripo_create_text_task` | `prompt`、`faceLimit`、`withMaterials`、`operationId`、`confirmExternalCost` | 创建一个不绑定 project 的 text-to-model task。`withMaterials=true` 请求 textured PBR generation（`texture`/`pbr`）；`false` 保持 geometry-only。可能消耗 credits。 |
-| `tripo_stage_local_image` | `localImagePath` | 校验并私有 snapshot 一张本地 PNG/JPEG，返回 opaque descriptor；不调用 Tripo。 |
-| `tripo_create_image_task` | `transferId`、`sha256`、`byteLength`、`mediaType`、`faceLimit`、`withMaterials`、`operationId`、`confirmExternalCost` | 上传一张 staged image，并以独立 upload/generation durable checkpoints 创建不绑定 project 的 image-to-model task。四个 descriptor fields 必须原样复制自 `tripo_stage_local_image`。可能消耗 credits。 |
+| `tripo_create_text_task` | `prompt`、`faceLimit`、`withMaterials`、`operationId`、`confirmExternalCost`、可选 `model` | 创建一个不绑定 project 的 text-to-model task。`withMaterials=true` 请求 textured PBR generation（`texture`/`pbr`）；`false` 保持 geometry-only。可能消耗 credits。 |
+| `tripo_stage_local_image` | `localImagePath` | 校验并私有 snapshot 一张不超过 10,000,000 bytes 的本地 PNG/JPEG/WebP，返回 opaque descriptor；不调用 Tripo。 |
+| `tripo_stage_url_image` | `imageUrl` | 由 sidecar 通过 bounded、逐跳复核 redirect、仅 public-network 的 connector 获取一张 HTTPS PNG/JPEG/WebP，并返回同样的 opaque descriptor；不发起 Tripo 付费调用。 |
+| `tripo_create_image_task` | `transferId`、`sha256`、`byteLength`、`mediaType`、`faceLimit`、`withMaterials`、`operationId`、`confirmExternalCost`、可选 `model` | 上传一张 staged image，并以独立 upload/generation durable checkpoints 创建不绑定 project 的 image-to-model task。四个 descriptor fields 必须原样复制自任一 staging tool。可能消耗 credits。 |
 | `tripo_create_obj_conversion` | `sourceTaskId`、`faceLimit`、`withMaterials`、`operationId`、`confirmExternalCost` | 创建一个不绑定 project 的 OBJ conversion。`withMaterials=true` 请求带 baked-diffuse MTL 与 image textures 的 OBJ bundle（`bake=true`）；`false` 只转换几何。可能消耗 credits。 |
 | `tripo_import_obj_task` | `conversionTaskId`、`name`、`documentSessionId`、`operationId`、`importMode`（默认 `native`）、`applyMaterials`（默认 `false`） | 下载、校验并将成功的 OBJ conversion 导入为 `DirectShape` 或 Family instance。 |
 
@@ -370,7 +364,10 @@ MCP 入口通过以下八个 tools 暴露同一套 shared workflow：
    - text：生成 UUID A；在用户明确确认费用后调用 `tripo_create_text_task`；
    - 本地图像：先调用 `tripo_stage_local_image`，再生成 UUID A；明确确认费用后，
      把 descriptor 返回的 `transferId`、`sha256`、`byteLength` 与 `mediaType`
-     分别传入四个同名参数，再调用 `tripo_create_image_task`。
+     分别传入四个同名参数，再调用 `tripo_create_image_task`；
+   - 图片 URL：先用一个 public HTTPS URL 调用 `tripo_stage_url_image`，再按本地图像
+     分支原样使用 descriptor。private/loopback/link-local/reserved、IPv4-compatible
+     IPv6 与 NAT64 目标都会被拒绝。
 2. 用 `tripo_task_status` 轮询返回的 task ID，直到 `success` 或 terminal failure。
    遇到 `failed`、`cancelled`、`banned` 或 `expired` 时停止。
 3. 生成 UUID B；再次取得明确费用确认后调用
@@ -534,9 +531,8 @@ appearance asset，有效 MTL color 仍会应用，但 bitmap 不会绑定。
 
 - 每次 import 创建一个 non-solid Generic Models `DirectShape`（`mesh`），或加载
   一个 Family 并在 project origin 放置一个 `FamilyInstance`（`family`）。
-- 当前宿主 window 只支持 text-to-3D。本地 PNG/JPEG staging、upload 与
-  image-to-3D creation 已由 MCP 提供；window image controls、WebP 与 public URL
-  input 尚未实现。
+- 当前宿主 window 与 MCP source 已支持 text、本地 PNG/JPEG/WebP 与 public HTTPS
+  image URL。Windows/Revit 编译、视觉/无障碍检查和真实 paid-provider canary 仍是独立 gate。
 - text-generation 默认 model 是 `v3.1-20260211`；`TRIPO_MODEL` 可以选择另一个
   通过语法校验的 identifier，改变它也会改变 text-task paid-operation identity。
 - 材质只支持 baked diffuse（OBJ `Kd`/`d`/`Tr` color/alpha 加每个 slot 一张

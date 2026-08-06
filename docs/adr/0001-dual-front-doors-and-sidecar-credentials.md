@@ -449,16 +449,18 @@ Accepted default:
 
 The implemented local-image kind is `image_task_creation`. Its operation
 identity covers the API base/endpoints, exact image identity (SHA-256, length,
-detected media type), generation options, effective credential, and document
-session. After upload, the exact generation request including `file_token` has
+detected media type), generation options, model, and effective credential.
+Image generation remains project-independent. After upload, the exact
+generation request including `file_token` has
 its own durable fingerprint. Neither raw image bytes nor the source path enter
 the operations JSONL.
 
 ### 6.2 Upload
 
 - The current implementation uses Tripo's documented `POST /v3/files` for one
-  verified local PNG/JPEG of 1–20,000,000 bytes.
-- WebP, public URL, presign, and large-file paths remain deferred.
+  byte-proven PNG/JPEG/WebP of 1–10,000,000 bytes. Input may be a local private
+  snapshot or a bounded public-HTTPS sidecar fetch; ADR-0003 defines that
+  opaque staging boundary. Presign and larger-file paths remain deferred.
 - Upload is its own ambiguity boundary:
   `prepared → image_upload_dispatching → image_file_token_persisted`.
   A lost/ambiguous upload response becomes `outcome_unknown` with
@@ -586,7 +588,7 @@ claiming real-host acceptance or release.
 | 0 | Extract or isolate `Tripo.Core` behind stable workflow APIs; MCP remains green | **Implemented in place:** `ITripoWorkflow` and shared execution registration are used by MCP and host-control; portable regression gate required before merge |
 | 1 | Secret resolve/store + `Has/Set/ClearApiKey` + missing-key dialog wiring | **Implemented in source:** env/session/native store resolution, authenticated methods, and both dialogs; native store and real-host canaries remain |
 | 2 | Rhino Eto + Revit simple panel for **text** end-to-end via sidecar | **Implemented in source:** both host package layouts include their sidecar and prior package handshakes passed; the latest recovery, credential-concurrency, and shutdown-hardening delta still needs the complete portable/host compilation rerun, and real AEC host import/interaction and visual recovery canaries remain |
-| 3 | Image upload + `tripo_create_image_task` + host-side image UX | **Partial implementation:** local PNG/JPEG transfer, multi-stage journal, MCP tools, and Rhino GHA image creation exist in source; Eto/Revit panel image controls, public URL/WebP input, full current gates, and real-host acceptance remain open |
+| 3 | Image upload + `tripo_create_image_task` + host-side image UX | **Implemented in Revit source:** local/URL PNG/JPEG/WebP staging, multi-stage journal, MCP tools, and Revit WPF input controls are present; full Windows compilation, real-host interaction, visual/accessibility, and paid-provider acceptance remain open |
 | 4 | Packaging scripts / zip layout; README dual-door rewrite | **Partial:** build output includes a complete sidecar and READMEs describe both doors; installer, signing, and release artifacts remain |
 
 Packaging must place plug-in + sidecar binaries; it must never bake a shared API
@@ -596,7 +598,7 @@ key into the package.
 
 ## 10. Compliance checklist
 
-A text-only implementation claims partial conformance only if:
+The current implementation claims source-level conformance only if:
 
 - [x] Both front doors still share one journal/staging root semantics.
 - [x] Plug-in code paths cannot persist `TRIPO_API_KEY` into documents or project
@@ -606,13 +608,13 @@ A text-only implementation claims partial conformance only if:
       `outcome_unknown`.
 - [x] Panel dispatches persist secret-free recovery IDs before connector entry;
       stale or invalid hints block replacement UUIDs until reconciliation.
-- [x] Implemented local PNG/JPEG image creation is multi-stage journaled, uses
+- [x] Local/URL PNG/JPEG/WebP image creation is multi-stage journaled, uses
       upload/`file_token`, and does not weaken import bridge allowlists.
 - [x] MCP text tools remain usable for agents without requiring the panel.
 - [x] Docs updated if trust boundaries move.
 
-Panel image mode, WebP/public URL input, packaging, and real-host acceptance
-remain incomplete, so this ADR is not a release-completion claim.
+Packaging and real-host acceptance remain incomplete, so this ADR is not a
+release-completion claim. ADR-0003 controls the newer image-input details.
 
 ---
 

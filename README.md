@@ -254,9 +254,9 @@ If you customize the directory:
 Setting this variable only in the MCP client makes the server and Revit use
 different discovery/staging roots and prevents a correct bridge connection.
 
-`image-transfers` may contain a private copy of an MCP-selected PNG/JPEG until
-a durable file-token or upload-ambiguity checkpoint exists. Preserve it with
-the paid-operation journal during recovery.
+`image-transfers` may briefly contain a private PNG/JPEG/WebP snapshot selected
+by the panel or MCP, or downloaded by the sidecar from a vetted public HTTPS
+URL. Preserve it with the paid-operation journal during recovery.
 
 ## Use the Revit window
 
@@ -264,11 +264,13 @@ the paid-operation journal during recovery.
    **Add-Ins → Tripo → Tripo 3D**. Repeated clicks activate the same modeless
    window. If it owns workflow state, clicking the close button hides it
    silently; use the ribbon command to show it again.
-2. The window automatically connects to the active project. Enter a prompt and
-   click **Create in Revit**. One credit confirmation covers generation and
-   OBJ conversion; the panel then auto-polls, converts, and imports without
-   manual Refresh / Convert / Import clicks. Progress shows
-   Generating → Converting → Importing on a single bar.
+2. The window automatically connects to the active project. Choose **Text**,
+   **Local image**, or **Image URL**. Enter a prompt, select a PNG/JPEG/WebP,
+   or enter one public HTTPS URL, then click **Create in Revit**. The local
+   picker previews an in-memory snapshot; URL preview is intentionally not
+   fetched by WPF. One credit confirmation covers generation and OBJ
+   conversion; the panel then auto-polls, converts, and imports without manual
+   Refresh / Convert / Import clicks.
 3. If no key is usable, **Create** opens the API-key dialog (also available
    under **Settings**). Create keys at
    [Tripo Platform](https://platform.tripo3d.ai/api-keys).
@@ -350,8 +352,9 @@ additional explicit failure-review checkbox. Invalid, oversized,
 unknown-schema, or symlinked hints remain blocked for manual inspection; a
 custom Windows data root must retain
 current-user-only ACLs. The paid-operation journal—not the hint—is
-authoritative. The Revit window remains text-only; local-image creation is
-available through the optional MCP tools.
+authoritative. The Revit window accepts a text prompt, a local PNG/JPEG/WebP,
+or a public HTTPS image URL. Local paths never cross host-control; URL staging
+is performed by the sidecar before the paid operation is prepared.
 
 ## Start and verify MCP
 
@@ -362,7 +365,7 @@ For the optional MCP path:
 3. Open the writable project that should receive the model.
 4. Start or restart the MCP client so the server receives the intended
    environment.
-5. Confirm that the client lists the eight tools below.
+5. Confirm that the client lists the nine tools below.
 6. Call `tripo_host_context`.
 
 A successful context receipt proves that the MCP server reached Revit and
@@ -385,7 +388,7 @@ the intended Revit PID and restart the MCP server.
 
 ## MCP tools
 
-The MCP front door exposes the same shared workflow as these eight tools:
+The MCP front door exposes the same shared workflow as these nine tools:
 
 | Tool | Main arguments | Effect |
 | --- | --- | --- |
@@ -393,8 +396,9 @@ The MCP front door exposes the same shared workflow as these eight tools:
 | `tripo_task_status` | `taskId` | Queries one existing Tripo task. |
 | `tripo_operation_status` | `operationId` | Reads a durable local paid-operation record. No Tripo or Revit call. |
 | `tripo_create_text_task` | `prompt`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost`, optional `model` | Creates one project-independent text-to-model task. `withMaterials=true` requests textured PBR generation (`texture`/`pbr`); `false` stays geometry-only. Optional `model` selects a Tripo snapshot (e.g. `P1-20260311`); omitted uses `TRIPO_MODEL` or the catalog default. May consume credits. |
-| `tripo_stage_local_image` | `localImagePath` | Validates and privately snapshots one local PNG/JPEG and returns an opaque descriptor. No Tripo call. |
-| `tripo_create_image_task` | `transferId`, `sha256`, `byteLength`, `mediaType`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost` | Uploads one staged image and creates a project-independent image-to-model task with durable upload/generation checkpoints. Copy the four descriptor fields exactly from `tripo_stage_local_image`. May consume credits. |
+| `tripo_stage_local_image` | `localImagePath` | Validates and privately snapshots one local PNG/JPEG/WebP up to 10,000,000 bytes and returns an opaque descriptor. No Tripo call. |
+| `tripo_stage_url_image` | `imageUrl` | Fetches one public HTTPS PNG/JPEG/WebP through the sidecar's bounded, redirect-aware, public-network-only connector and returns the same opaque descriptor. No Tripo paid call. |
+| `tripo_create_image_task` | `transferId`, `sha256`, `byteLength`, `mediaType`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost`, optional `model` | Uploads one staged image and creates a project-independent image-to-model task with durable upload/generation checkpoints. Copy the four descriptor fields exactly from either staging tool. May consume credits. |
 | `tripo_create_obj_conversion` | `sourceTaskId`, `faceLimit`, `withMaterials`, `operationId`, `confirmExternalCost` | Creates one project-independent OBJ conversion. `withMaterials=true` requests an OBJ bundle with a baked-diffuse MTL and image textures (`bake=true`); `false` converts geometry only. May consume credits. |
 | `tripo_import_obj_task` | `conversionTaskId`, `name`, `documentSessionId`, `operationId`, `importMode` (default `native`), `applyMaterials` (default `false`) | Downloads, validates, and imports a successful OBJ conversion as a `DirectShape` or a Family instance. |
 
@@ -423,7 +427,11 @@ possible external charge.
    - local image: call `tripo_stage_local_image`, then generate UUID A and,
      after explicit cost confirmation, call `tripo_create_image_task`, copying
      the returned descriptor's `transferId`, `sha256`, `byteLength`, and
-     `mediaType` into the four same-named arguments.
+     `mediaType` into the four same-named arguments;
+   - image URL: call `tripo_stage_url_image` with one public HTTPS URL, then use
+     its descriptor exactly like the local-image branch. Redirects are
+     revalidated and private, loopback, link-local, reserved, IPv4-compatible,
+     and NAT64 destinations are rejected.
 2. Poll its returned task ID with `tripo_task_status` until it reports
    `success` or a terminal failure. Stop on `failed`, `cancelled`, `banned`, or
    `expired`.
@@ -620,9 +628,9 @@ bound.
 - One non-solid Generic Models `DirectShape` (`mesh` mode) or one Family loaded
   and placed as one `FamilyInstance` at project origin (`family` mode), per
   import.
-- The host window currently supports text-to-3D only. Local PNG/JPEG staging,
-  upload, and image-to-3D creation are available through MCP; window image
-  controls, WebP, and public-URL input remain open.
+- The host window and MCP source now support text, local PNG/JPEG/WebP, and
+  public HTTPS image input. Windows/Revit compilation, visual/accessibility
+  acceptance, and a real paid provider canary remain separate release gates.
 - Default text-generation model `v3.1-20260211`; `TRIPO_MODEL` can select
   another syntactically valid identifier, and changing it changes text-task
   paid-operation identity.

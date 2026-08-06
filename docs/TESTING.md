@@ -50,8 +50,15 @@ The automated suite covers:
   `outcome_unknown` refusal to resend;
 - explicit successful-response `code` validation plus exact round-trip of
   current `task_...` and canonical lowercase UUID task identities;
-- image transfer, signed download, ZIP extraction, bundle hashing, OBJ/MTL
-  parsing, coordinate conversion, and parser limits;
+- local and URL image staging for PNG/JPEG/WebP, byte/signature agreement,
+  redirect and private-network rejection (including IPv4-compatible IPv6 and
+  NAT64), streaming byte caps, timeout/cancellation cleanup, signed download,
+  ZIP extraction, bundle hashing, OBJ/MTL parsing, coordinate conversion, and
+  parser limits;
+- image panel-session UUID/receipt/hash/model binding, same-UUID
+  `image_file_token_persisted` retry, upload-vs-generation rejection semantics,
+  task-type checking, descriptor cleanup, and schema-v4 recovery without
+  paths, URLs, bytes, or opaque descriptors;
 - host UI state and presentation contracts, inline input validation, honest
   task-progress mapping, diagnostic content, snapshot-bound recovery-review
   receipts, and stable UUID retry eligibility;
@@ -88,8 +95,11 @@ deployment.
    `.rfa`.
 3. Verify all document work runs through `ExternalEvent`, the window remains
    responsive, and document switches fail closed.
-4. Run text generation, status, conversion, DirectShape import, and family
-   import with explicit cost confirmations.
+4. Run text, local PNG/JPEG/WebP, and public-HTTPS image generation; verify the
+   local in-memory preview, its confirmation SHA/length, replacement-file
+   refusal before paid dispatch, oversized-dimension preview refusal, URL
+   no-preview boundary, status, conversion,
+   DirectShape import, and family import with explicit cost confirmations.
 5. Deliberately lose a paid response and recover with the displayed UUID
    without issuing a replacement POST.
 6. Verify transaction rollback, Undo, design-coordinate limits, family-template
@@ -126,6 +136,10 @@ The WPF window also needs a separate visual and accessibility pass:
    paid/import recovery filter. Verify both mutation directions; the paired
    source has parity, but Revit-only or legacy-Rhino evidence does not prove
    the deployed pair.
+9. Exercise a URL whose redirect changes from public to loopback/private and a
+   DNS result containing private, IPv4-compatible, or NAT64 addresses. Staging
+   must fail before any paid image request, and no URL may appear in recovery
+   JSON, operation journals, or UI receipts.
 
 Static checks, portable tests, Windows compilation, real Revit interaction,
 visual acceptance, signing, installer validation, and public release are

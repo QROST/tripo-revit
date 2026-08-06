@@ -9,6 +9,7 @@ ADR (or supersede it) before contradicting implementation.
 | ID | Title | Status |
 | --- | --- | --- |
 | [0001](./0001-dual-front-doors-and-sidecar-credentials.md) | Dual front doors (host UI + MCP) and sidecar-only API credentials | Accepted; Rhino/Grasshopper clauses are compatibility context only |
+| [0003](./0003-image-input-boundary.md) | Opaque image staging for panel and MCP input | Accepted |
 
 Related non-ADR design locks:
 

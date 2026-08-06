@@ -9,6 +9,7 @@ door 与 credential ownership 的变更控制入口。实现若要违背现有 A
 | ID | 标题 | 状态 |
 | --- | --- | --- |
 | [0001](./0001-dual-front-doors-and-sidecar-credentials.md) | 双入口（宿主 UI + MCP）与仅由 sidecar 持有 API credential | Accepted；Rhino/Grasshopper 条款只保留为兼容性背景 |
+| [0003](./0003-image-input-boundary.md) | Panel/MCP 使用 opaque staging 的图片输入边界 | Accepted |
 
 相关的非 ADR 设计约束：
 

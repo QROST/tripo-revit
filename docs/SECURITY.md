@@ -70,22 +70,36 @@
 
 The lock and journal protect cooperating processes under one login. They do not isolate a malicious same-user process. `Flush(true)` supports a process-crash recovery boundary but is not a remote transaction or a complete power-loss proof.
 
-## Local image transfers
+## Image transfers
 
-- The first slice accepts one byte-proven PNG or JPEG from 1 through
-  20,000,000 bytes. Extensions are not trusted; WebP and public URLs are not
-  accepted.
-- The choosing process creates a private snapshot under
+- The shared boundary accepts one byte-proven PNG, JPEG, or WebP from 1 through
+  10,000,000 bytes. Extensions and remote `Content-Type` are hints only; file
+  signatures determine the media type.
+- For local input, the choosing process creates a private snapshot under
   `<TRIPO_LOCAL_DATA_DIR>/image-transfers/`. The protocol carries only a
   canonical transfer UUID, lowercase SHA-256, byte length, and detected media
   type. Source paths and filenames do not cross host-control.
+- The WPF preview hashes the exact in-memory bytes while its read-only file
+  handle is open. The paid confirmation shows that byte length and SHA-256;
+  post-confirm staging must match both before any paid dispatch. A mismatch
+  deletes the un-dispatched transfer and requires review of a refreshed
+  preview. Preview decoding bounds each source dimension, total source pixels,
+  and both output dimensions so a small compressed file cannot request an
+  unbounded bitmap inside Revit.
+- For URL input, host-control carries only the user-entered HTTPS URL to the
+  explicit stage method. The sidecar requires a public DNS result, pins the
+  vetted endpoint for each request, disables proxies/cookies, and revalidates
+  every redirect. Loopback, private, link-local, multicast, reserved,
+  IPv4-compatible IPv6, and NAT64 destinations are rejected. URL length,
+  redirect count, headers, body time, and body bytes are bounded. The URL is
+  never written to a descriptor, paid journal, panel recovery hint, or receipt.
 - The image-transfer root and UUID-derived file are checked for
   symlink/reparse-point substitution before use or deletion. Unix directories
   and files use `0700`/`0600`; a custom data root must be private.
 - Before multipart upload, the sidecar bounds, reads, hashes, and signature
   checks the file into an immutable in-memory snapshot. The upload never
   continues from the mutable owner-writable path after validation and uses only
-  a generic `input.png` or `input.jpg` filename.
+  a generic `input.png`, `input.jpg`, or `input.webp` filename.
 - A newly staged image that has not been handed to the sidecar is deleted on a
   pre-dispatch failure where safe. Once admitted, it may remain until a durable
   file-token or upload-ambiguity checkpoint exists. Preserve
@@ -103,11 +117,13 @@ The lock and journal protect cooperating processes under one login. They do not 
 - The shared UI layer writes a recovery hint synchronously and atomically before
   an attempted generation, conversion, or import dispatch reaches the
   connector.
-- Hints contain schema/host/process timestamps, the exact document-session and
-  operation UUIDs, durable task IDs when known, bounded journal state, and the
-  minimum bounded import retry fields. They never contain the API key, prompt,
-  Authorization header, URL, request fingerprint, signed URL, artifact path, or
-  document path.
+- Schema-v4 hints contain schema/host/process timestamps, mutually exclusive
+  text/image generation operation UUIDs, durable task IDs when known, bounded
+  journal state, and the minimum bounded import retry fields. They never
+  contain the staged-image descriptor, local path, filename, bytes, API key,
+  prompt, Authorization header, URL, request fingerprint, signed URL, artifact
+  path, or document path. Strict v3/v2 migration initializes the image slot to
+  null.
 - Hints live under
   `<TRIPO_LOCAL_DATA_DIR>/ui-recovery/<host>/<recovery-id>.json`. Recovery IDs
   are independent per panel session, preventing same-document panels from
@@ -179,7 +195,8 @@ This boundary protects against cross-user access. It does not treat another proc
   and stage-only OBJ receipts. It does not accept scripts, arbitrary shell
   commands, remote import URLs, or arbitrary local import paths. Only the
   explicit host import method can mutate a document; stage-only mesh retrieval
-  cannot.
+  cannot. The one remote-input method stages a bounded HTTPS image through the
+  public-network connector and returns only an opaque descriptor.
 - Requests are length-bounded, concurrency-bounded, authenticated before
   dispatch, and covered by client/server deadlines. Request and descriptor
   string rendering redacts tokens and payloads.

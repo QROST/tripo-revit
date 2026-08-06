@@ -18,6 +18,40 @@ public sealed class ImageTransferStoreTests
         0x01,
     ];
 
+    // JPEG SOI + SOF marker (FF D8 FF) plus a minimal body so the file is
+    // longer than the 3-byte signature window used for detection.
+    private static readonly byte[] JpegBytes =
+    [
+        0xff,
+        0xd8,
+        0xff,
+        0xe0,
+        0x00,
+        0x02,
+        0x00,
+        0x00,
+    ];
+
+    // Minimal RIFF container: "RIFF" + 4 size bytes + "WEBP". The size field is
+    // arbitrary for detection (only the markers at offsets 0-3 and 8-11 matter).
+    private static readonly byte[] WebpBytes =
+    [
+        (byte)'R',
+        (byte)'I',
+        (byte)'F',
+        (byte)'F',
+        0x00,
+        0x00,
+        0x00,
+        0x04,
+        (byte)'W',
+        (byte)'E',
+        (byte)'B',
+        (byte)'P',
+        0x00,
+        0x01,
+    ];
+
     [Fact]
     public async Task StageAndOpenVerifiedAsyncRoundTripsOpaquePng()
     {
@@ -112,6 +146,85 @@ public sealed class ImageTransferStoreTests
 
         Assert.Equal("image_type_invalid", exception.Code);
         Assert.DoesNotContain(source, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StageAndOpenVerifiedAsyncRoundTripsOpaqueJpeg()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        string source = Path.Combine(dataRoot.Path, "source.jpg");
+        await File.WriteAllBytesAsync(source, JpegBytes);
+
+        Tripo.Bridge.StagedImageTransfer transfer =
+            await Tripo.Bridge.ImageTransferStore.StageAsync(
+                source,
+                CancellationToken.None);
+
+        Assert.Equal("image/jpeg", transfer.MediaType);
+        Assert.Equal(JpegBytes.Length, transfer.ByteLength);
+        await using Stream verified =
+            await Tripo.Bridge.ImageTransferStore.OpenVerifiedAsync(
+                transfer,
+                CancellationToken.None);
+        using MemoryStream copy = new();
+        await verified.CopyToAsync(copy);
+        Assert.Equal(JpegBytes, copy.ToArray());
+    }
+
+    [Fact]
+    public async Task StageAndOpenVerifiedAsyncRoundTripsOpaqueWebp()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        string source = Path.Combine(dataRoot.Path, "source.webp");
+        await File.WriteAllBytesAsync(source, WebpBytes);
+
+        Tripo.Bridge.StagedImageTransfer transfer =
+            await Tripo.Bridge.ImageTransferStore.StageAsync(
+                source,
+                CancellationToken.None);
+
+        Assert.Equal("image/webp", transfer.MediaType);
+        Assert.Equal(WebpBytes.Length, transfer.ByteLength);
+        await using Stream verified =
+            await Tripo.Bridge.ImageTransferStore.OpenVerifiedAsync(
+                transfer,
+                CancellationToken.None);
+        using MemoryStream copy = new();
+        await verified.CopyToAsync(copy);
+        Assert.Equal(WebpBytes, copy.ToArray());
+    }
+
+    [Fact]
+    public async Task StageAsyncRejectsWebpExtensionSpoof()
+    {
+        using TemporaryDataRoot dataRoot = new();
+        string source = Path.Combine(dataRoot.Path, "source.webp");
+        await File.WriteAllBytesAsync(source, PngBytes);
+
+        Tripo.Bridge.BridgeCallException exception =
+            await Assert.ThrowsAsync<Tripo.Bridge.BridgeCallException>(
+                () => Tripo.Bridge.ImageTransferStore.StageAsync(
+                    source,
+                    CancellationToken.None));
+
+        Assert.Equal("image_type_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void ValidateDescriptorRejectsUnsupportedMediaType()
+    {
+        Tripo.Bridge.StagedImageTransfer unsupported = new(
+            Guid.NewGuid().ToString("D"),
+            new string('a', 64),
+            16,
+            "image/gif");
+
+        Tripo.Bridge.BridgeCallException exception =
+            Assert.Throws<Tripo.Bridge.BridgeCallException>(
+                () => Tripo.Bridge.ImageTransferStore.ValidateDescriptor(
+                    unsupported));
+
+        Assert.Equal("image_transfer_invalid", exception.Code);
     }
 
     [Fact]

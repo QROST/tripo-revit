@@ -643,7 +643,7 @@ internal sealed class PaidOperationJournal : IPaidOperationJournal
             IsValidFingerprint(entry.ImageSha256) &&
             entry.ImageByteLength is > 0 and
                 <= Tripo.Bridge.BridgeConstants.MaximumImageTransferBytes &&
-            entry.ImageMediaType is "image/png" or "image/jpeg";
+            entry.ImageMediaType is "image/png" or "image/jpeg" or "image/webp";
         bool noImageIdentity =
             entry.ImageSha256 is null &&
             entry.ImageByteLength is null &&

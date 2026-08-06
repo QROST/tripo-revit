@@ -8,6 +8,7 @@ public static partial class ImageTransferStore
     private const string TransferExtension = ".image";
     private const string PngMediaType = "image/png";
     private const string JpegMediaType = "image/jpeg";
+    private const string WebpMediaType = "image/webp";
     private static readonly byte[] PngSignature =
     [
         0x89,
@@ -19,6 +20,12 @@ public static partial class ImageTransferStore
         0x1a,
         0x0a,
     ];
+
+    // WebP is a RIFF container: bytes 0-3 are "RIFF", bytes 8-11 are "WEBP".
+    // Bytes 4-7 are the little-endian file size and are not needed for detection.
+    private static readonly byte[] WebpRiffMarker = [(byte)'R', (byte)'I', (byte)'F', (byte)'F'];
+    private static readonly byte[] WebpTypeMarker = [(byte)'W', (byte)'E', (byte)'B', (byte)'P'];
+    private const int WebpSignatureLength = 12;
 
     public static async Task<StagedImageTransfer> StageAsync(
         string sourcePath,
@@ -60,11 +67,12 @@ public static partial class ImageTransferStore
         FileInfo sourceInfo = new(sourcePath);
         RejectLinkOrReparsePoint(sourceInfo, "The selected image");
         string extension = Path.GetExtension(sourceInfo.Name).ToLowerInvariant();
-        if (extension is not ".png" and not ".jpg" and not ".jpeg")
+        if (extension is not ".png" and not ".jpg" and not ".jpeg" and not ".webp")
         {
             throw new BridgeCallException(
                 "image_type_invalid",
-                "The selected image must use a .png, .jpg, or .jpeg extension.");
+                "The selected image must use a .png, .jpg, .jpeg, or .webp " +
+                "extension.");
         }
 
         await using FileStream source = new(
@@ -259,11 +267,13 @@ public static partial class ImageTransferStore
         }
 
         ValidateLength(transfer.ByteLength);
-        if (transfer.MediaType is not PngMediaType and not JpegMediaType)
+        if (transfer.MediaType is not PngMediaType
+            and not JpegMediaType
+            and not WebpMediaType)
         {
             throw new BridgeCallException(
                 "image_transfer_invalid",
-                "mediaType must be image/png or image/jpeg.");
+                "mediaType must be image/png, image/jpeg, or image/webp.");
         }
     }
 
@@ -307,7 +317,8 @@ public static partial class ImageTransferStore
         using IncrementalHash hash =
             IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         byte[] buffer = new byte[64 * 1024];
-        byte[] prefix = new byte[PngSignature.Length];
+        int prefixCapacity = Math.Max(PngSignature.Length, WebpSignatureLength);
+        byte[] prefix = new byte[prefixCapacity];
         int prefixLength = 0;
         long total = 0;
         await using (FileStream destination = CreatePrivateFile(destinationPath))
@@ -388,9 +399,16 @@ public static partial class ImageTransferStore
             return JpegMediaType;
         }
 
+        if (prefix.Length >= WebpSignatureLength &&
+            prefix[..WebpRiffMarker.Length].SequenceEqual(WebpRiffMarker) &&
+            prefix.Slice(8, WebpTypeMarker.Length).SequenceEqual(WebpTypeMarker))
+        {
+            return WebpMediaType;
+        }
+
         throw new BridgeCallException(
             "image_type_invalid",
-            "The selected file is not a supported PNG or JPEG image.");
+            "The selected file is not a supported PNG, JPEG, or WebP image.");
     }
 
     private static void EnsureExtensionMatches(
@@ -400,7 +418,8 @@ public static partial class ImageTransferStore
         bool matches =
             mediaType == PngMediaType && extension == ".png" ||
             mediaType == JpegMediaType &&
-            extension is ".jpg" or ".jpeg";
+            extension is ".jpg" or ".jpeg" ||
+            mediaType == WebpMediaType && extension == ".webp";
         if (!matches)
         {
             throw new BridgeCallException(

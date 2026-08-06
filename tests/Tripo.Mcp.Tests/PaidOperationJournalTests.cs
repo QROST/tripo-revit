@@ -374,6 +374,39 @@ public sealed class PaidOperationJournalTests
     }
 
     [Fact]
+    public async Task WebpImageOperationPersistsAndRecovers()
+    {
+        using TemporaryJournalRoot root = new();
+        string operationId = Guid.NewGuid().ToString("D");
+        Tripo.Bridge.StagedImageTransfer webpImage = new(
+            "33333333-3333-3333-3333-333333333333",
+            new string('e', 64),
+            14,
+            "image/webp");
+        Tripo.Mcp.PaidOperationDescriptor descriptor =
+            Tripo.Mcp.PaidOperationDescriptor.ForImageTask(
+                operationId,
+                new string('d', 64),
+                webpImage);
+        Tripo.Mcp.PaidOperationJournal journal = new(root.Path);
+
+        await using (Tripo.Mcp.PaidOperationLease lease =
+                     await journal.AcquireAsync(descriptor, CancellationToken.None))
+        {
+            Assert.Equal("prepared", lease.Status.State);
+            Assert.True(lease.Status.CanResumeCreation);
+        }
+
+        Tripo.Mcp.PaidOperationStatusReceipt recovered =
+            await journal.GetStatusAsync(operationId, CancellationToken.None);
+
+        Assert.Equal(
+            Tripo.Mcp.PaidOperationKinds.ImageTaskCreation,
+            recovered.Kind);
+        Assert.Equal("prepared", recovered.State);
+    }
+
+    [Fact]
     public async Task ActiveLeaseBlocksCompetitorsAndStatusCannotAuthorizeReplay()
     {
         using TemporaryJournalRoot root = new();

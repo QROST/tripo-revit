@@ -369,6 +369,55 @@ public sealed class TripoV3ClientTests
         generationPayload.Dispose();
     }
 
+    [Fact]
+    public async Task CreateImageModelAsyncUploadsOpaqueWebpThenCreatesTask()
+    {
+        using TemporaryDataRoot root = new();
+        string sourcePath = Path.Combine(root.Path, "private-source.webp");
+        Tripo.Mcp.ImageGenerationOptions options =
+            await CreateImageOptionsAsync(sourcePath, TestWebpBytes);
+        List<string> paths = [];
+        string? uploadFileName = null;
+        string? uploadMediaType = null;
+        byte[]? uploadBytes = null;
+        DelegateHttpMessageHandler handler = new(async (request, call) =>
+        {
+            paths.Add(request.RequestUri!.AbsolutePath);
+            if (call == 1)
+            {
+                MultipartFormDataContent multipart =
+                    Assert.IsType<MultipartFormDataContent>(request.Content);
+                HttpContent file = Assert.Single(multipart);
+                uploadFileName =
+                    file.Headers.ContentDisposition?.FileName?.Trim('"');
+                uploadMediaType = file.Headers.ContentType?.MediaType;
+                uploadBytes = await file.ReadAsByteArrayAsync();
+                return DelegateHttpMessageHandler.Json(
+                    """{"code":0,"data":{"file_token":"file_token123"}}""");
+            }
+
+            return DelegateHttpMessageHandler.Json(
+                """{"code":0,"data":{"task_id":"task_image123"}}""");
+        });
+        Tripo.Mcp.TripoV3Client client = CreateClient(handler);
+        RecordingImageCheckpoint checkpoint = CreateImageCheckpoint(
+            client,
+            options);
+
+        string taskId = await client.CreateImageModelAsync(
+            options,
+            checkpoint,
+            CancellationToken.None);
+
+        Assert.Equal("task_image123", taskId);
+        Assert.Equal(
+            ["/v3/files", "/v3/generation/image-to-model"],
+            paths);
+        Assert.Equal("input.webp", uploadFileName);
+        Assert.Equal("image/webp", uploadMediaType);
+        Assert.Equal(TestWebpBytes, uploadBytes);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
@@ -1299,10 +1348,42 @@ public sealed class TripoV3ClientTests
         0x01,
     ];
 
+    // Minimal RIFF/WebP container: "RIFF" + 4 size bytes + "WEBP" + body.
+    private static readonly byte[] TestWebpBytes =
+    [
+        (byte)'R',
+        (byte)'I',
+        (byte)'F',
+        (byte)'F',
+        0x00,
+        0x00,
+        0x00,
+        0x04,
+        (byte)'W',
+        (byte)'E',
+        (byte)'B',
+        (byte)'P',
+        0x00,
+        0x01,
+    ];
+
     private static async Task<Tripo.Mcp.ImageGenerationOptions>
         CreateImageOptionsAsync(string sourcePath)
     {
         await File.WriteAllBytesAsync(sourcePath, TestPngBytes);
+        Tripo.Bridge.StagedImageTransfer transfer =
+            await Tripo.Bridge.ImageTransferStore.StageAsync(
+                sourcePath,
+                CancellationToken.None);
+        return new Tripo.Mcp.ImageGenerationOptions(
+            transfer,
+            10_000);
+    }
+
+    private static async Task<Tripo.Mcp.ImageGenerationOptions>
+        CreateImageOptionsAsync(string sourcePath, byte[] sourceBytes)
+    {
+        await File.WriteAllBytesAsync(sourcePath, sourceBytes);
         Tripo.Bridge.StagedImageTransfer transfer =
             await Tripo.Bridge.ImageTransferStore.StageAsync(
                 sourcePath,

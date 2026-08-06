@@ -115,9 +115,9 @@ public sealed class TripoTools
         OpenWorld = false,
         UseStructuredContent = true)]
     [Description(
-        "Validate and copy one explicit local PNG or JPEG into the private Tripo " +
-        "image-transfer store. This does not call Tripo or consume credits. The " +
-        "returned opaque descriptor can be passed to tripo_create_image_task.")]
+        "Validate and copy one explicit local PNG, JPEG, or WebP into the private " +
+        "Tripo image-transfer store. This does not call Tripo or consume credits. " +
+        "The returned opaque descriptor can be passed to tripo_create_image_task.")]
     public Task<Tripo.Bridge.StagedImageTransfer> StageLocalImageAsync(
         [Description(
             "Absolute path visible to this local sidecar. The source path is " +
@@ -146,7 +146,7 @@ public sealed class TripoTools
         [Description("Opaque UUID returned by tripo_stage_local_image.")] string transferId,
         [Description("SHA-256 returned by tripo_stage_local_image.")] string sha256,
         [Description("Exact byte length returned by tripo_stage_local_image.")] long byteLength,
-        [Description("image/png or image/jpeg as returned by staging.")] string mediaType,
+        [Description("image/png, image/jpeg, or image/webp as returned by staging.")] string mediaType,
         [Description("Maximum mesh face count from 500 through 200000.")] int faceLimit,
         [Description(
             "When true, request textured PBR materials; when false, generate " +

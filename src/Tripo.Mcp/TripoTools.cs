@@ -130,6 +130,39 @@ public sealed class TripoTools
             cancellationToken);
 
     [McpServerTool(
+        Name = "tripo_stage_url_image",
+        Title = "Stage a remote image URL for Tripo",
+        ReadOnly = false,
+        Destructive = false,
+        Idempotent = false,
+        OpenWorld = true,
+        UseStructuredContent = true)]
+    [Description(
+        "Download one public HTTPS PNG, JPEG, or WebP image into the private " +
+        "Tripo image-transfer store. Only public HTTPS hosts are accepted; the " +
+        "Tripo API key is never sent to the image host. This does not call Tripo " +
+        "or consume credits. The returned opaque descriptor can be passed to " +
+        "tripo_create_image_task.")]
+    public Task<Tripo.Bridge.StagedImageTransfer> StageUrlImageAsync(
+        [Description(
+            "Absolute HTTPS URL of a public PNG, JPEG, or WebP image. The host " +
+            "must be a public DNS name, not an IP literal, localhost, or .local.")] string imageUrl,
+        CancellationToken cancellationToken) =>
+        InvokeAsync(
+            () =>
+            {
+                if (!Uri.TryCreate(imageUrl, UriKind.Absolute, out Uri? imageUri))
+                {
+                    throw new ArgumentException(
+                        "imageUrl must be an absolute HTTPS URL.",
+                        nameof(imageUrl));
+                }
+
+                return _workflow.StageUrlImageAsync(imageUri, cancellationToken);
+            },
+            cancellationToken);
+
+    [McpServerTool(
         Name = "tripo_create_image_task",
         Title = "Create a Tripo image task",
         ReadOnly = false,

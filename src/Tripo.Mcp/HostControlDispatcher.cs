@@ -63,6 +63,9 @@ internal sealed class HostControlDispatcher :
                 Tripo.Bridge.HostControlConstants.CreateImageTaskMethod =>
                     await CreateImageTaskAsync(payload, cancellationToken)
                         .ConfigureAwait(false),
+                Tripo.Bridge.HostControlConstants.StageImageMethod =>
+                    await StageImageAsync(payload, cancellationToken)
+                        .ConfigureAwait(false),
                 Tripo.Bridge.HostControlConstants.TaskStatusMethod =>
                     await GetTaskStatusAsync(payload, cancellationToken)
                         .ConfigureAwait(false),
@@ -253,6 +256,28 @@ internal sealed class HostControlDispatcher :
             receipt.TaskId,
             receipt.Model,
             receipt.ImageSha256);
+    }
+
+    private async Task<Tripo.Bridge.StagedImageTransfer> StageImageAsync(
+        JsonElement payload,
+        CancellationToken cancellationToken)
+    {
+        Tripo.Bridge.HostControlStageImageRequest request =
+            Deserialize<Tripo.Bridge.HostControlStageImageRequest>(payload);
+        if (!Uri.TryCreate(
+                request.ImageUrl,
+                UriKind.Absolute,
+                out Uri? imageUri))
+        {
+            throw new Tripo.Bridge.HostControlCallException(
+                "image_url_invalid",
+                "imageUrl must be an absolute HTTPS URL.");
+        }
+
+        return await _workflow.StageUrlImageAsync(
+                imageUri,
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async Task<Tripo.Bridge.HostControlOperationStatusReceipt>

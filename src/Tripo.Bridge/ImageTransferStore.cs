@@ -363,7 +363,7 @@ public static partial class ImageTransferStore
             mediaType);
     }
 
-    private static FileStream CreatePrivateFile(string path)
+    public static FileStream CreatePrivateFile(string path)
     {
         FileStreamOptions options = new()
         {

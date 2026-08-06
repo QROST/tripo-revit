@@ -38,6 +38,13 @@ public static class TripoExecutionServices
             })
             .ConfigurePrimaryHttpMessageHandler(
                 TripoMcpApplication.CreatePublicNetworkHandler);
+        services
+            .AddHttpClient<IRemoteImageStager, RemoteImageStager>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(2);
+            })
+            .ConfigurePrimaryHttpMessageHandler(
+                TripoMcpApplication.CreatePublicNetworkHandler);
         services.AddSingleton<IHostConnection>(
             _ => explicitHostProcessId is { } processId
                 ? new HostConnection(normalizedHost, processId)

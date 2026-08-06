@@ -17,6 +17,7 @@ public static class HostControlConstants
     public const string ListModelsMethod = "workflow.list_models";
     public const string CreateTextTaskMethod = "workflow.create_text_task";
     public const string CreateImageTaskMethod = "workflow.create_image_task";
+    public const string StageImageMethod = "workflow.stage_image";
     public const string TaskStatusMethod = "workflow.task_status";
     public const string OperationStatusMethod = "workflow.operation_status";
     public const string CreateObjConversionMethod =
@@ -38,6 +39,7 @@ public static class HostControlConstants
         ListModelsMethod,
         CreateTextTaskMethod,
         CreateImageTaskMethod,
+        StageImageMethod,
         TaskStatusMethod,
         OperationStatusMethod,
         CreateObjConversionMethod,

@@ -33,6 +33,12 @@ public interface IHostControlClient
         throw new NotSupportedException(
             "This host-control client does not support image task creation.");
 
+    Task<StagedImageTransfer> StageImageAsync(
+        HostControlStageImageRequest request,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException(
+            "This host-control client does not support image staging.");
+
     Task<HostControlTaskStatusReceipt> GetTaskStatusAsync(
         string taskId,
         CancellationToken cancellationToken);
@@ -137,6 +143,16 @@ public sealed class HostControlClient : IHostControlClient
             HostControlCreateImageTaskRequest,
             HostControlImageTaskCreationReceipt>(
             HostControlConstants.CreateImageTaskMethod,
+            request,
+            cancellationToken);
+
+    public Task<StagedImageTransfer> StageImageAsync(
+        HostControlStageImageRequest request,
+        CancellationToken cancellationToken) =>
+        CallAsync<
+            HostControlStageImageRequest,
+            StagedImageTransfer>(
+            HostControlConstants.StageImageMethod,
             request,
             cancellationToken);
 

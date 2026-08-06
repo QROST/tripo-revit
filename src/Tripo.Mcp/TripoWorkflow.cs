@@ -73,13 +73,15 @@ public sealed class TripoWorkflow : ITripoWorkflow
     private readonly Tripo.Bridge.ICredentialWorkflowExecutionGate _executionGate;
     private readonly TripoWorkflowOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly IRemoteImageStager? _remoteImageStager;
 
     public TripoWorkflow(
         ITripoApiClient apiClient,
         IArtifactStager artifactStager,
         IHostConnection hostConnection,
         TripoWorkflowOptions? options = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRemoteImageStager? remoteImageStager = null)
         : this(
             apiClient,
             artifactStager,
@@ -87,7 +89,8 @@ public sealed class TripoWorkflow : ITripoWorkflow
             new PaidOperationJournal(),
             options,
             timeProvider,
-            new Tripo.Bridge.CredentialWorkflowExecutionGate())
+            new Tripo.Bridge.CredentialWorkflowExecutionGate(),
+            remoteImageStager)
     {
     }
 
@@ -98,7 +101,8 @@ public sealed class TripoWorkflow : ITripoWorkflow
         IPaidOperationJournal operationJournal,
         TripoWorkflowOptions? options = null,
         TimeProvider? timeProvider = null,
-        Tripo.Bridge.ICredentialWorkflowExecutionGate? executionGate = null)
+        Tripo.Bridge.ICredentialWorkflowExecutionGate? executionGate = null,
+        IRemoteImageStager? remoteImageStager = null)
     {
         _apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
         _artifactStager =
@@ -112,6 +116,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
         _options = options ?? TripoWorkflowOptions.Default;
         _options.Validate();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _remoteImageStager = remoteImageStager;
     }
 
     public Task<Tripo.Bridge.HostContextReceipt> GetHostContextAsync(
@@ -141,6 +146,19 @@ public sealed class TripoWorkflow : ITripoWorkflow
         Tripo.Bridge.ImageTransferStore.StageAsync(
             localImagePath,
             cancellationToken);
+
+    public Task<Tripo.Bridge.StagedImageTransfer> StageUrlImageAsync(
+        Uri imageUri,
+        CancellationToken cancellationToken)
+    {
+        if (_remoteImageStager is null)
+        {
+            throw new NotSupportedException(
+                "This workflow does not support remote image staging.");
+        }
+
+        return _remoteImageStager.StageUrlImageAsync(imageUri, cancellationToken);
+    }
 
     public async Task<TextTaskCreationReceipt> CreateTextTaskAsync(
         string prompt,

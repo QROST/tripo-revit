@@ -19,6 +19,12 @@ public interface ITripoWorkflow
         throw new NotSupportedException(
             "This workflow does not support local image staging.");
 
+    Task<Tripo.Bridge.StagedImageTransfer> StageUrlImageAsync(
+        Uri imageUri,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException(
+            "This workflow does not support remote image staging.");
+
     Task<Tripo.Bridge.HostControlModelCatalogReceipt> ListModelsAsync(
         CancellationToken cancellationToken) =>
         Task.FromResult(Tripo.Bridge.TripoModelCatalog.CreateReceipt());

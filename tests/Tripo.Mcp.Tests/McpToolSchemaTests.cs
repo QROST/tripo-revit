@@ -7,7 +7,7 @@ namespace Tripo.Mcp.Tests;
 public sealed class McpToolSchemaTests
 {
     [Fact]
-    public void ToolDiscoveryExposesOnlyTheEightRecoverableTools()
+    public void ToolDiscoveryExposesOnlyTheRecoverableTools()
     {
         ServiceCollection services = new();
         services
@@ -29,6 +29,7 @@ public sealed class McpToolSchemaTests
                 "tripo_import_obj_task",
                 "tripo_operation_status",
                 "tripo_stage_local_image",
+                "tripo_stage_url_image",
                 "tripo_task_status",
             ],
             tools.Select(tool => tool.ProtocolTool.Name));
@@ -83,6 +84,20 @@ public sealed class McpToolSchemaTests
             stageImageSchema,
             StringComparison.Ordinal);
         Assert.False(stageImage.ProtocolTool.Annotations?.OpenWorldHint);
+
+        McpServerTool stageUrlImage = tools.Single(
+            tool => tool.ProtocolTool.Name == "tripo_stage_url_image");
+        string stageUrlImageSchema =
+            stageUrlImage.ProtocolTool.InputSchema.ToString();
+        Assert.Contains(
+            "imageUrl",
+            stageUrlImageSchema,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "confirmExternalCost",
+            stageUrlImageSchema,
+            StringComparison.Ordinal);
+        Assert.True(stageUrlImage.ProtocolTool.Annotations?.OpenWorldHint);
 
         McpServerTool operationStatus = tools.Single(
             tool => tool.ProtocolTool.Name == "tripo_operation_status");

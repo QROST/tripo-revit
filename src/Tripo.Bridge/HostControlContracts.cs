@@ -189,6 +189,8 @@ public sealed record HostControlImageTaskCreationReceipt(
     string Model,
     string ImageSha256);
 
+public sealed record HostControlStageImageRequest(string ImageUrl);
+
 public sealed record HostControlTaskStatusRequest(string TaskId);
 
 public sealed record HostControlTaskStatusReceipt(

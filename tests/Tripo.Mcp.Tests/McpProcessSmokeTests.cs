@@ -85,6 +85,7 @@ public sealed class McpProcessSmokeTests
                 "tripo_import_obj_task",
                 "tripo_operation_status",
                 "tripo_stage_local_image",
+                "tripo_stage_url_image",
                 "tripo_task_status",
             ],
             tools

@@ -93,6 +93,47 @@ public sealed class HostControlDispatcherTests
     }
 
     [Fact]
+    public async Task StageImageMethodDispatchesTheUrl()
+    {
+        FakeWorkflow workflow = new();
+        Tripo.Mcp.HostControlDispatcher dispatcher = CreateDispatcher(
+            new FakeCredentialService(),
+            workflow);
+        Tripo.Bridge.HostControlStageImageRequest request = new(
+            "https://example.com/reference.png");
+
+        object result = await dispatcher.DispatchAsync(
+            Tripo.Bridge.HostControlConstants.StageImageMethod,
+            Tripo.Bridge.BridgeJson.ToElement(request),
+            CancellationToken.None);
+
+        Tripo.Bridge.StagedImageTransfer transfer =
+            Assert.IsType<Tripo.Bridge.StagedImageTransfer>(result);
+        Assert.NotNull(workflow.LastStageImageUrl);
+        Assert.Equal(
+            "https://example.com/reference.png",
+            workflow.LastStageImageUrl!.ToString());
+        Assert.Equal("image/png", transfer.MediaType);
+    }
+
+    [Fact]
+    public async Task StageImageMethodRejectsRelativeUrl()
+    {
+        FakeWorkflow workflow = new();
+        Tripo.Mcp.HostControlDispatcher dispatcher = CreateDispatcher(
+            new FakeCredentialService(),
+            workflow);
+        Tripo.Bridge.HostControlStageImageRequest request =
+            new("not-a-url");
+
+        await Assert.ThrowsAsync<Tripo.Bridge.HostControlCallException>(
+            () => dispatcher.DispatchAsync(
+                Tripo.Bridge.HostControlConstants.StageImageMethod,
+                Tripo.Bridge.BridgeJson.ToElement(request),
+                CancellationToken.None));
+    }
+
+    [Fact]
     public async Task StageObjMethodMapsStageOnlyReceipt()
     {
         FakeWorkflow workflow = new();
@@ -438,6 +479,8 @@ public sealed class HostControlDispatcherTests
             private set;
         }
 
+        public Uri? LastStageImageUrl { get; private set; }
+
         public Task<Tripo.Bridge.HostContextReceipt> GetHostContextAsync(
             CancellationToken cancellationToken) =>
             Task.FromResult(
@@ -599,6 +642,19 @@ public sealed class HostControlDispatcherTests
                         "Y",
                         "right",
                         includeMaterials)));
+        }
+
+        public Task<Tripo.Bridge.StagedImageTransfer> StageUrlImageAsync(
+            Uri imageUri,
+            CancellationToken cancellationToken)
+        {
+            LastStageImageUrl = imageUri;
+            return Task.FromResult(
+                new Tripo.Bridge.StagedImageTransfer(
+                    "11111111-1111-1111-1111-111111111111",
+                    new string('a', 64),
+                    10,
+                    "image/png"));
         }
 
         public Task<Tripo.Mcp.ObjTaskImportReceipt> ImportObjTaskAsync(

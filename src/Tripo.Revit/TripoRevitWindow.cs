@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
@@ -7,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 
 namespace Tripo.Revit;
@@ -19,8 +21,19 @@ internal sealed class TripoRevitWindow : Window
         "in this .rvt or .rfa document.\n\n" +
         "Replacing the effective key can make same-UUID recovery fail closed " +
         "for unfinished UI or MCP paid operations. Reconcile them first.";
+    private const int MaximumPreviewDimension = 16_384;
+    private const long MaximumPreviewPixels = 100_000_000;
+    private const int MaximumPreviewWidth = 360;
+    private const int MaximumPreviewHeight = 180;
 
     private readonly Tripo.HostUi.TripoPanelSession _session;
+    private readonly RadioButton _textInputMode = InputModeRadioButton(
+        "Text",
+        isChecked: true);
+    private readonly RadioButton _localImageInputMode = InputModeRadioButton(
+        "Local image");
+    private readonly RadioButton _imageUrlInputMode = InputModeRadioButton(
+        "Image URL");
     private readonly TextBox _prompt = new()
     {
         AcceptsReturn = true,
@@ -30,6 +43,30 @@ internal sealed class TripoRevitWindow : Window
         TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
     };
+    private readonly TextBox _localImagePath = new()
+    {
+        IsReadOnly = true,
+        IsReadOnlyCaretVisible = true,
+        TextWrapping = TextWrapping.Wrap,
+    };
+    private readonly Button _browseLocalImage = ActionButton("Choose image…");
+    private readonly System.Windows.Controls.Image _localImagePreview = new()
+    {
+        HorizontalAlignment = HorizontalAlignment.Left,
+        Margin = new Thickness(0, 5, 0, 5),
+        MaxHeight = 180,
+        Stretch = Stretch.Uniform,
+        Visibility = Visibility.Collapsed,
+    };
+    private readonly TextBox _imageUrl = new()
+    {
+        MaxLength = 4096,
+    };
+    private readonly TextBlock _imageInputHelp = StatusBlock();
+    private readonly TextBlock _imageInputValidation = ValidationBlock();
+    private readonly StackPanel _textInputBlock = new();
+    private readonly StackPanel _localImageInputBlock = new();
+    private readonly StackPanel _imageUrlInputBlock = new();
     private readonly TextBox _faceLimit = new()
     {
         MaxLength = 6,
@@ -131,6 +168,8 @@ internal sealed class TripoRevitWindow : Window
     private string? _currentAction;
     private string? _pipelineStageLabel;
     private int? _pipelineProgressValue;
+    private string? _localImagePreviewSha256;
+    private long? _localImagePreviewByteLength;
     private bool _generationRefreshFailed;
     private bool _conversionRefreshFailed;
     private bool _generationJournalUpdatedOnFailedRefresh;
@@ -193,7 +232,12 @@ internal sealed class TripoRevitWindow : Window
         _refreshConversion.Click += OnRefreshConversion;
         _import.Click += OnImport;
         _reset.Click += OnReset;
+        _textInputMode.Checked += OnInputModeChanged;
+        _localImageInputMode.Checked += OnInputModeChanged;
+        _imageUrlInputMode.Checked += OnInputModeChanged;
+        _browseLocalImage.Click += OnBrowseLocalImage;
         _prompt.TextChanged += OnFormInputChanged;
+        _imageUrl.TextChanged += OnFormInputChanged;
         _faceLimit.TextChanged += OnFormInputChanged;
         _name.TextChanged += OnFormInputChanged;
         _importMode.SelectionChanged += OnImportModeChanged;
@@ -229,8 +273,12 @@ internal sealed class TripoRevitWindow : Window
         AutomationProperties.SetLiveSetting(
             _importStatus,
             AutomationLiveSetting.Polite);
+        AutomationProperties.SetName(
+            _localImagePreview,
+            "Selected local image preview");
         UpdateImportModeHelp();
         UpdatePlacementModeHelp();
+        UpdateInputModeVisibility();
         UpdateControls(_session.State);
     }
 
@@ -256,16 +304,46 @@ internal sealed class TripoRevitWindow : Window
         panel.Children.Add(new TextBlock
         {
             Margin = new Thickness(0, 2, 0, 8),
-            Text = "Text to 3D in the active project.",
+            Text = "Text or image to 3D in the active project.",
             TextWrapping = TextWrapping.Wrap,
         });
         panel.Children.Add(_documentStatus);
         _resultStatus.FontWeight = FontWeights.SemiBold;
         panel.Children.Add(_resultStatus);
 
+        WrapPanel inputModes = new()
+        {
+            Margin = new Thickness(0, 4, 0, 4),
+        };
+        inputModes.Children.Add(_textInputMode);
+        inputModes.Children.Add(_localImageInputMode);
+        inputModes.Children.Add(_imageUrlInputMode);
+        panel.Children.Add(new TextBlock
+        {
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 4, 0, 0),
+            Text = "Input",
+        });
+        panel.Children.Add(inputModes);
+
         _prompt.MinHeight = 96;
-        panel.Children.Add(FieldBlock("Describe the model", _prompt));
-        panel.Children.Add(_promptValidation);
+        _textInputBlock.Children.Add(
+            FieldBlock("Describe the model", _prompt));
+        _textInputBlock.Children.Add(_promptValidation);
+        panel.Children.Add(_textInputBlock);
+
+        _localImageInputBlock.Children.Add(
+            FieldBlock("Selected image", _localImagePath));
+        _localImageInputBlock.Children.Add(ActionRow(_browseLocalImage));
+        _localImageInputBlock.Children.Add(_localImagePreview);
+        panel.Children.Add(_localImageInputBlock);
+
+        _imageUrlInputBlock.Children.Add(
+            FieldBlock("HTTPS image URL", _imageUrl));
+        panel.Children.Add(_imageUrlInputBlock);
+        _imageInputHelp.Opacity = 0.75;
+        panel.Children.Add(_imageInputHelp);
+        panel.Children.Add(_imageInputValidation);
 
         _create.Margin = new Thickness(0, 8, 0, 4);
         _create.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -377,6 +455,8 @@ internal sealed class TripoRevitWindow : Window
             "paid request and performs no import.";
         _create.ToolTip =
             "Generate, convert to OBJ, and import into the active Revit project.";
+        _browseLocalImage.ToolTip =
+            "Choose a PNG, JPEG, or WebP image from this computer.";
         return panel;
     }
 
@@ -562,6 +642,12 @@ internal sealed class TripoRevitWindow : Window
                         allPaidInspectionsSucceeded &=
                             await AppendPaidRecoveryStatusAsync(
                             lines,
+                            "Image generation",
+                            loaded.Hint.ImageGeneration,
+                            "image_generation");
+                        allPaidInspectionsSucceeded &=
+                            await AppendPaidRecoveryStatusAsync(
+                            lines,
                             "Conversion",
                             loaded.Hint.Conversion);
                         if (loaded.Hint.Import is not null)
@@ -601,7 +687,8 @@ internal sealed class TripoRevitWindow : Window
     private async Task<bool> AppendPaidRecoveryStatusAsync(
         List<string> lines,
         string stage,
-        Tripo.HostUi.TripoPanelPaidRecoveryHint? hint)
+        Tripo.HostUi.TripoPanelPaidRecoveryHint? hint,
+        string? inspectionStage = null)
     {
         if (hint is null)
         {
@@ -613,7 +700,7 @@ internal sealed class TripoRevitWindow : Window
             Tripo.Bridge.HostControlOperationStatusReceipt status =
                 await _session.InspectPaidRecoveryAsync(
                     hint.OperationId,
-                    stage.ToLowerInvariant());
+                    inspectionStage ?? stage.ToLowerInvariant());
             lines.Add(
                 $"{stage}: {hint.OperationId} — {status.State}; " +
                 $"task: {status.CreatedTaskId ?? "not durable"}; " +
@@ -722,6 +809,22 @@ internal sealed class TripoRevitWindow : Window
                 return;
             }
 
+            InputMode selectedInputMode = SelectedInputMode;
+            if (selectedInputMode == InputMode.Text &&
+                string.IsNullOrWhiteSpace(_prompt.Text))
+            {
+                UpdateControls(_session.State);
+                return;
+            }
+
+            if (selectedInputMode != InputMode.Text &&
+                _session.State.PreparedImageGeneration is null &&
+                !TryValidateSelectedImageInput(out _))
+            {
+                UpdateControls(_session.State);
+                return;
+            }
+
             string objectName = ResolveObjectName();
             if (string.IsNullOrWhiteSpace(objectName))
             {
@@ -743,17 +846,48 @@ internal sealed class TripoRevitWindow : Window
             bool associateLevel =
                 _associateLevel.IsChecked == true &&
                 string.Equals(importMode.Value, "family", StringComparison.Ordinal);
+            string inputSummary = _session.State.PreparedImageGeneration is not null
+                ? "Image: previously staged transfer"
+                : selectedInputMode switch
+                {
+                    InputMode.LocalImage =>
+                        "Local image: " +
+                        BoundSummary(Path.GetFileName(_localImagePath.Text)) +
+                        Environment.NewLine +
+                        "Bytes: " + _localImagePreviewByteLength +
+                        Environment.NewLine +
+                        "SHA-256: " + _localImagePreviewSha256,
+                    InputMode.ImageUrl =>
+                        "HTTPS image URL selected",
+                    _ => "Prompt: " + BoundSummary(_prompt.Text),
+                };
+            Tripo.HostUi.TripoPanelState paidState = _session.State;
+            string? pendingPaidOperationId = null;
+            bool pendingPaidRetry = false;
+            if (!paidState.HasSuccessfulGeneration)
+            {
+                pendingPaidOperationId =
+                    paidState.CurrentGenerationOperationId;
+                pendingPaidRetry =
+                    paidState.CurrentGenerationRetryAllowed;
+            }
+            else if (!paidState.HasSuccessfulConversion &&
+                     paidState.PreparedConversion is { } conversion)
+            {
+                pendingPaidOperationId = conversion.OperationId;
+                pendingPaidRetry = paidState.ConversionRetryAllowed;
+            }
 
             if (!ConfirmPaidDispatch(
                     "Create model in Revit?",
-                    operationId: null,
-                    retry: false,
+                    operationId: pendingPaidOperationId,
+                    retry: pendingPaidRetry,
                     "This runs generation and OBJ conversion, then imports into " +
                     "the active project. Generation and conversion may consume " +
                     "Tripo credits." +
                     Environment.NewLine +
                     Environment.NewLine +
-                    "Prompt: " + BoundSummary(_prompt.Text) +
+                    inputSummary +
                     Environment.NewLine +
                     "Model: " + modelId +
                     Environment.NewLine +
@@ -787,19 +921,72 @@ internal sealed class TripoRevitWindow : Window
             UpdateControls(_session.State);
             try
             {
-                await _session.RunCreatePipelineAsync(
-                    _prompt.Text,
-                    faceLimit,
-                    withMaterials,
-                    objectName,
-                    importMode.Value,
-                    applyMaterials,
-                    userConfirmedExternalCost: true,
-                    placement.Value,
-                    associateLevel,
-                    modelId,
-                    progress,
-                    pipelineCts.Token);
+                if (selectedInputMode == InputMode.Text)
+                {
+                    await _session.RunCreatePipelineAsync(
+                        _prompt.Text,
+                        faceLimit,
+                        withMaterials,
+                        objectName,
+                        importMode.Value,
+                        applyMaterials,
+                        userConfirmedExternalCost: true,
+                        placement.Value,
+                        associateLevel,
+                        modelId,
+                        progress,
+                        pipelineCts.Token);
+                }
+                else
+                {
+                    if (_session.State.PreparedImageGeneration is null)
+                    {
+                        if (selectedInputMode == InputMode.LocalImage)
+                        {
+                            string selectedPath = _localImagePath.Text;
+                            Tripo.HostUi.PreparedImageGeneration prepared =
+                                await _session.PrepareLocalImageGenerationAsync(
+                                    selectedPath,
+                                    faceLimit,
+                                    withMaterials,
+                                    modelId,
+                                    pipelineCts.Token);
+                            if (!string.Equals(
+                                    prepared.Image.Sha256,
+                                    _localImagePreviewSha256,
+                                    StringComparison.Ordinal) ||
+                                prepared.Image.ByteLength !=
+                                _localImagePreviewByteLength)
+                            {
+                                _session.ResetWorkflow();
+                                LoadLocalImagePreview(selectedPath);
+                                throw new InvalidOperationException(
+                                    "The selected image changed after its preview. " +
+                                    "No paid image request was sent. Review the " +
+                                    "updated preview and confirm again.");
+                            }
+                        }
+                        else
+                        {
+                            await _session.PrepareUrlImageGenerationAsync(
+                                _imageUrl.Text.Trim(),
+                                faceLimit,
+                                withMaterials,
+                                modelId,
+                                pipelineCts.Token);
+                        }
+                    }
+
+                    await _session.RunPreparedImagePipelineAsync(
+                        objectName,
+                        importMode.Value,
+                        applyMaterials,
+                        userConfirmedExternalCost: true,
+                        placement.Value,
+                        associateLevel,
+                        progress,
+                        pipelineCts.Token);
+                }
             }
             finally
             {
@@ -828,6 +1015,12 @@ internal sealed class TripoRevitWindow : Window
     {
         try
         {
+            if (SelectedInputMode != InputMode.Text)
+            {
+                throw new InvalidOperationException(
+                    "Use Create in Revit to run the selected image workflow.");
+            }
+
             _generationRefreshFailed = false;
             _generationJournalUpdatedOnFailedRefresh = false;
             await RunWithStatusAsync(
@@ -879,7 +1072,7 @@ internal sealed class TripoRevitWindow : Window
         _generationRefreshFailed = false;
         _generationJournalUpdatedOnFailedRefresh = false;
         Tripo.Bridge.HostControlOperationStatusReceipt? operationBefore =
-            _session.State.GenerationOperationStatus;
+            _session.State.CurrentGenerationOperationStatus;
         bool refreshAttempted = false;
         try
         {
@@ -903,7 +1096,7 @@ internal sealed class TripoRevitWindow : Window
                 refreshAttempted &&
                 !Equals(
                     operationBefore,
-                    _session.State.GenerationOperationStatus);
+                    _session.State.CurrentGenerationOperationStatus);
             UpdateControls(_session.State);
             ShowError(exception);
         }
@@ -1109,6 +1302,278 @@ internal sealed class TripoRevitWindow : Window
         TextChangedEventArgs args) =>
         UpdateControls(_session.State);
 
+    private void OnInputModeChanged(object sender, RoutedEventArgs args)
+    {
+        UpdateInputModeVisibility();
+        UpdateControls(_session.State);
+    }
+
+    private void OnBrowseLocalImage(object sender, RoutedEventArgs args)
+    {
+        Tripo.HostUi.TripoPanelState state = _session.State;
+        if (state.Busy || state.HasWorkflowState ||
+            !string.IsNullOrWhiteSpace(_currentAction))
+        {
+            return;
+        }
+
+        OpenFileDialog dialog = new()
+        {
+            AddExtension = true,
+            CheckFileExists = true,
+            CheckPathExists = true,
+            Filter =
+                "Supported images (*.png;*.jpg;*.jpeg;*.webp)|" +
+                "*.png;*.jpg;*.jpeg;*.webp|" +
+                "PNG images (*.png)|*.png|" +
+                "JPEG images (*.jpg;*.jpeg)|*.jpg;*.jpeg|" +
+                "WebP images (*.webp)|*.webp",
+            Multiselect = false,
+            Title = "Choose an image for Tripo",
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        _localImagePath.Text = dialog.FileName;
+        LoadLocalImagePreview(dialog.FileName);
+        UpdateControls(state);
+    }
+
+    private void LoadLocalImagePreview(string path)
+    {
+        _localImagePreview.Source = null;
+        _localImagePreview.Visibility = Visibility.Collapsed;
+        _localImagePreview.ToolTip = null;
+        _localImagePreviewSha256 = null;
+        _localImagePreviewByteLength = null;
+        try
+        {
+            using FileStream stream = new(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read);
+            long imageBytes = stream.Length;
+            if (imageBytes <= 0 ||
+                imageBytes > Tripo.Bridge.BridgeConstants.MaximumImageTransferBytes)
+            {
+                _localImagePreview.ToolTip =
+                    "Preview skipped because the image is empty or exceeds " +
+                    "the local size limit.";
+                return;
+            }
+
+            byte[] snapshot = GC.AllocateUninitializedArray<byte>(
+                checked((int)imageBytes));
+            stream.ReadExactly(snapshot);
+            _localImagePreviewSha256 = Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(snapshot))
+                .ToLowerInvariant();
+            _localImagePreviewByteLength = snapshot.LongLength;
+            using MemoryStream metadataStream =
+                new(snapshot, writable: false);
+            BitmapDecoder decoder = BitmapDecoder.Create(
+                metadataStream,
+                BitmapCreateOptions.PreservePixelFormat |
+                BitmapCreateOptions.DelayCreation,
+                BitmapCacheOption.OnDemand);
+            if (decoder.Frames.Count == 0)
+            {
+                _localImagePreview.ToolTip =
+                    "Preview skipped because the image has no decodable frame.";
+                return;
+            }
+
+            BitmapFrame frame = decoder.Frames[0];
+            int pixelWidth = frame.PixelWidth;
+            int pixelHeight = frame.PixelHeight;
+            if (pixelWidth <= 0 ||
+                pixelHeight <= 0 ||
+                pixelWidth > MaximumPreviewDimension ||
+                pixelHeight > MaximumPreviewDimension ||
+                (long)pixelWidth * pixelHeight > MaximumPreviewPixels)
+            {
+                _localImagePreview.ToolTip =
+                    "Preview skipped because the decoded image dimensions " +
+                    "exceed the safe panel limit.";
+                return;
+            }
+
+            double previewScale = Math.Min(
+                1d,
+                Math.Min(
+                    (double)MaximumPreviewWidth / pixelWidth,
+                    (double)MaximumPreviewHeight / pixelHeight));
+            int previewWidth = Math.Max(
+                1,
+                (int)Math.Round(pixelWidth * previewScale));
+            int previewHeight = Math.Max(
+                1,
+                (int)Math.Round(pixelHeight * previewScale));
+            using MemoryStream previewStream = new(snapshot, writable: false);
+            BitmapImage bitmap = new();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
+            bitmap.DecodePixelWidth = previewWidth;
+            bitmap.DecodePixelHeight = previewHeight;
+            bitmap.StreamSource = previewStream;
+            bitmap.EndInit();
+            bitmap.Freeze();
+            _localImagePreview.Source = bitmap;
+            _localImagePreview.Visibility = Visibility.Visible;
+        }
+        catch (Exception exception)
+            when (exception is IOException or UnauthorizedAccessException or
+                  NotSupportedException or ArgumentException or FormatException or
+                  System.Security.SecurityException or OutOfMemoryException)
+        {
+            // WPF/WIC does not decode WebP on every supported Windows setup.
+            // The sidecar still performs authoritative content validation.
+            _localImagePreview.ToolTip =
+                "Preview unavailable: " + BoundMessage(exception.Message);
+        }
+    }
+
+    private InputMode SelectedInputMode =>
+        _localImageInputMode.IsChecked == true
+            ? InputMode.LocalImage
+            : _imageUrlInputMode.IsChecked == true
+                ? InputMode.ImageUrl
+                : InputMode.Text;
+
+    private void UpdateInputModeVisibility()
+    {
+        InputMode mode = SelectedInputMode;
+        _textInputBlock.Visibility = VisibleWhen(mode == InputMode.Text);
+        _localImageInputBlock.Visibility =
+            VisibleWhen(mode == InputMode.LocalImage);
+        _imageUrlInputBlock.Visibility =
+            VisibleWhen(mode == InputMode.ImageUrl);
+        _imageInputHelp.Visibility = VisibleWhen(mode != InputMode.Text);
+        _imageInputHelp.Text = mode switch
+        {
+            InputMode.LocalImage when _localImagePreview.Source is not null =>
+                "The preview is loaded into memory and the source file handle " +
+                "is closed. After confirmation the workflow privately snapshots " +
+                "the source, and the sidecar revalidates that staged copy.",
+            InputMode.LocalImage when
+                _localImagePreview.ToolTip is string previewNotice =>
+                previewNotice +
+                " The workflow still privately snapshots and validates the " +
+                "source after confirmation.",
+            InputMode.LocalImage when
+                !string.IsNullOrWhiteSpace(_localImagePath.Text) =>
+                "A preview is unavailable in this Windows image decoder. The " +
+                "workflow still privately snapshots and validates the source " +
+                "after confirmation.",
+            InputMode.LocalImage =>
+                "Choose a local PNG, JPEG, or WebP image. Local images stay on " +
+                "this computer.",
+            InputMode.ImageUrl =>
+                "The local sidecar fetches and revalidates this HTTPS URL only " +
+                "after confirmation. This panel does not fetch remote previews.",
+            _ => string.Empty,
+        };
+    }
+
+    private bool TryValidateSelectedImageInput(out string validation)
+    {
+        validation = string.Empty;
+        switch (SelectedInputMode)
+        {
+            case InputMode.Text:
+                return true;
+            case InputMode.LocalImage:
+            {
+                string path = _localImagePath.Text.Trim();
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    validation = "Choose a local PNG, JPEG, or WebP image.";
+                    return false;
+                }
+
+                if (!File.Exists(path))
+                {
+                    validation = "The selected local image is no longer available.";
+                    return false;
+                }
+
+                try
+                {
+                    long imageBytes = new FileInfo(path).Length;
+                    if (imageBytes <= 0 ||
+                        imageBytes >
+                        Tripo.Bridge.BridgeConstants.MaximumImageTransferBytes)
+                    {
+                        validation =
+                            "The image must be non-empty and no larger than 10 MB.";
+                        return false;
+                    }
+                }
+                catch (Exception exception)
+                    when (exception is IOException or UnauthorizedAccessException or
+                          NotSupportedException or ArgumentException or
+                          System.Security.SecurityException)
+                {
+                    validation =
+                        "The selected local image cannot be read: " +
+                        BoundMessage(exception.Message);
+                    return false;
+                }
+
+                string extension = Path.GetExtension(path);
+                if (!string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(extension, ".jpeg", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase))
+                {
+                    validation = "Choose a PNG, JPEG, or WebP image.";
+                    return false;
+                }
+
+                if (_localImagePreviewSha256 is null ||
+                    _localImagePreviewByteLength is null)
+                {
+                    validation =
+                        "Re-select the image so the panel can bind its bytes to " +
+                        "the paid confirmation.";
+                    return false;
+                }
+
+                return true;
+            }
+            case InputMode.ImageUrl:
+            {
+                string candidate = _imageUrl.Text.Trim();
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    validation = "Enter an HTTPS image URL.";
+                    return false;
+                }
+
+                if (candidate.Length > 4096 ||
+                    !Uri.TryCreate(candidate, UriKind.Absolute, out Uri? uri) ||
+                    !string.Equals(uri.Scheme, Uri.UriSchemeHttps,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(uri.Host) ||
+                    !string.IsNullOrEmpty(uri.UserInfo))
+                {
+                    validation =
+                        "Enter an absolute HTTPS image URL without embedded credentials.";
+                    return false;
+                }
+
+                return true;
+            }
+            default:
+                validation = "Select an input mode.";
+                return false;
+        }
+    }
+
     private void OnImportModeChanged(
         object sender,
         SelectionChangedEventArgs args)
@@ -1176,6 +1641,11 @@ internal sealed class TripoRevitWindow : Window
         if (!string.IsNullOrWhiteSpace(_name.Text))
         {
             return _name.Text.Trim();
+        }
+
+        if (SelectedInputMode != InputMode.Text)
+        {
+            return "Tripo Model";
         }
 
         string prompt = _prompt.Text.Trim();
@@ -1363,13 +1833,17 @@ internal sealed class TripoRevitWindow : Window
             _reviewedRecoveryToken,
             recovery.PresentationToken,
             StringComparison.Ordinal);
+        InputMode inputMode = SelectedInputMode;
+        string presentationPrompt = inputMode == InputMode.Text
+            ? _prompt.Text
+            : "Image input";
         Tripo.HostUi.TripoPanelPresentation presentation =
             Tripo.HostUi.TripoPanelPresentation.Create(
                 state,
                 recovery,
                 _recoveryInspection,
                 reviewedCurrentRecovery,
-                _prompt.Text,
+                presentationPrompt,
                 _faceLimit.Text,
                 ResolveObjectName(),
                 "Revit",
@@ -1451,7 +1925,20 @@ internal sealed class TripoRevitWindow : Window
         SetLiveText(
             _promptValidation,
             presentation.PromptValidation,
-            VisibleWhen(presentation.PromptValidationVisible));
+            VisibleWhen(
+                inputMode == InputMode.Text &&
+                presentation.PromptValidationVisible));
+        string imageValidation = string.Empty;
+        bool imageInputValid = state.PreparedImageGeneration is not null;
+        if (!imageInputValid)
+        {
+            imageInputValid =
+                TryValidateSelectedImageInput(out imageValidation);
+        }
+        SetLiveText(
+            _imageInputValidation,
+            imageValidation,
+            VisibleWhen(inputMode != InputMode.Text && !imageInputValid));
         SetLiveText(
             _faceLimitValidation,
             presentation.FaceLimitValidation,
@@ -1461,7 +1948,9 @@ internal sealed class TripoRevitWindow : Window
             presentation.ObjectNameValidation,
             VisibleWhen(presentation.ObjectNameValidationVisible));
 
-        _create.IsEnabled = presentation.PrimaryActionEnabled;
+        _create.IsEnabled =
+            presentation.PrimaryActionEnabled &&
+            (inputMode == InputMode.Text || imageInputValid);
         _create.Content = presentation.PrimaryActionText;
         SetActionHelp(_create, presentation.PrimaryActionHelp);
         _connect.IsEnabled = presentation.ConnectEnabled;
@@ -1481,7 +1970,8 @@ internal sealed class TripoRevitWindow : Window
         SetActionHelp(
             _acknowledgeRecovery,
             presentation.AcknowledgeRecoveryHelp);
-        _generate.IsEnabled = presentation.GenerateEnabled;
+        _generate.IsEnabled =
+            presentation.GenerateEnabled && inputMode == InputMode.Text;
         _generate.Content = presentation.GenerateText;
         SetActionHelp(_generate, presentation.GenerateHelp);
         _refreshGeneration.IsEnabled =
@@ -1502,7 +1992,21 @@ internal sealed class TripoRevitWindow : Window
         SetActionHelp(_import, presentation.ImportHelp);
         _reset.IsEnabled = presentation.ResetEnabled;
         SetActionHelp(_reset, presentation.ResetHelp);
-        _prompt.IsEnabled = presentation.PromptEnabled;
+        bool sourceUnlocked =
+            presentation.PromptEnabled &&
+            !state.Busy &&
+            !state.HasWorkflowState &&
+            string.IsNullOrWhiteSpace(_currentAction);
+        _textInputMode.IsEnabled = sourceUnlocked;
+        _localImageInputMode.IsEnabled = sourceUnlocked;
+        _imageUrlInputMode.IsEnabled = sourceUnlocked;
+        _prompt.IsEnabled = sourceUnlocked && inputMode == InputMode.Text;
+        _localImagePath.IsEnabled = inputMode == InputMode.LocalImage;
+        _browseLocalImage.IsEnabled =
+            sourceUnlocked && inputMode == InputMode.LocalImage;
+        _imageUrl.IsEnabled =
+            sourceUnlocked && inputMode == InputMode.ImageUrl;
+        UpdateInputModeVisibility();
         bool settingsUnlocked =
             presentation.FaceLimitEnabled ||
             presentation.NameEnabled ||
@@ -1578,9 +2082,12 @@ internal sealed class TripoRevitWindow : Window
 
     private static bool CanInspectAmbiguousGenerationLocally(
         Tripo.HostUi.TripoPanelState state) =>
-        state.GenerationDispatchAttempted &&
-        state.GenerationReceipt is null &&
-        state.GenerationOperationStatus?.TaskIdDurable != true;
+        (state.HasImageGenerationState
+            ? state.ImageGenerationDispatchAttempted &&
+              state.ImageGenerationReceipt is null
+            : state.GenerationDispatchAttempted &&
+              state.GenerationReceipt is null) &&
+        state.CurrentGenerationOperationStatus?.TaskIdDurable != true;
 
     private static bool CanInspectAmbiguousConversionLocally(
         Tripo.HostUi.TripoPanelState state) =>
@@ -1632,6 +2139,17 @@ internal sealed class TripoRevitWindow : Window
         button.FontSize = 14;
         return button;
     }
+
+    private static RadioButton InputModeRadioButton(
+        string content,
+        bool isChecked = false) =>
+        new()
+        {
+            Content = content,
+            GroupName = "TripoInputMode",
+            IsChecked = isChecked,
+            Margin = new Thickness(0, 2, 16, 2),
+        };
 
     private static Button ActionButton(string content)
     {
@@ -1838,15 +2356,16 @@ internal sealed class TripoRevitWindow : Window
         List<string> lines = [];
         AddIdentity(
             lines,
-            "Generation operation",
+            "Text generation operation",
             state.PreparedGeneration?.OperationId);
         AddIdentity(
             lines,
+            "Image generation operation",
+            state.PreparedImageGeneration?.OperationId);
+        AddIdentity(
+            lines,
             "Generation task",
-            state.GenerationReceipt?.TaskId ??
-            (state.GenerationOperationStatus is { TaskIdDurable: true }
-                ? state.GenerationOperationStatus.CreatedTaskId
-                : null));
+            state.DurableGenerationTaskId);
         AddIdentity(
             lines,
             "Conversion operation",
@@ -1902,6 +2421,13 @@ internal sealed class TripoRevitWindow : Window
 
         string trimmed = message.Trim();
         return trimmed.Length <= 512 ? trimmed : trimmed[..512];
+    }
+
+    private enum InputMode
+    {
+        Text,
+        LocalImage,
+        ImageUrl,
     }
 
     private sealed record ImportModeOption(

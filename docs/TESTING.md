@@ -1,24 +1,31 @@
 # Testing and evidence
 
-This repository ships only the Revit 2026 adapter and its matching local
-sidecar/MCP executable.
+This repository ships the Revit adapter for the `.NET 8` generation (2025 and
+2026) and its matching local sidecar/MCP executable.
 
 ## Windows full gate
 
 Run from the repository root on Windows:
 
 ```powershell
-dotnet restore Tripo.Revit.sln
-dotnet build Tripo.Revit.sln --configuration Release --no-restore
+dotnet restore Tripo.Revit.sln /p:RevitYear=2026
+dotnet build Tripo.Revit.sln --configuration Release --no-restore /p:RevitYear=2026
 dotnet test Tripo.Revit.sln --configuration Release --no-build
 ```
 
-The full gate must produce:
+Compile-only gate for an additional host year:
+
+```powershell
+dotnet restore src/Tripo.Revit/Tripo.Revit.csproj /p:RevitYear=2025
+dotnet build src/Tripo.Revit/Tripo.Revit.csproj --configuration Release --no-restore /p:RevitYear=2025
+```
+
+The full gate must produce (replace `2026` with your `RevitYear`):
 
 ```text
-src/Tripo.Revit/bin/Release/net8.0-windows/Tripo.Revit.dll
-src/Tripo.Revit/bin/Release/net8.0-windows/Tripo.Revit.addin
-src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/Tripo.Revit.Mcp.dll
+src/Tripo.Revit/bin/Release/net8.0-windows/2026/Tripo.Revit.dll
+src/Tripo.Revit/bin/Release/net8.0-windows/2026/Tripo.Revit.addin
+src/Tripo.Revit/bin/Release/net8.0-windows/2026/sidecar/Tripo.Revit.Mcp.dll
 src/Tripo.Revit.Mcp/bin/Release/net8.0/Tripo.Revit.Mcp.dll
 ```
 
@@ -64,7 +71,8 @@ The automated suite covers:
   receipts, and stable UUID retry eligibility;
 - MCP schema plus real stdio initialization/tool-list handshakes;
 - Revit `.addin` AddInId, assembly path, application class, and vendor identity;
-- Windows-only CI additionally compiles the Revit/WPF host and exercises
+- Windows-only CI additionally compiles the Revit/WPF host for 2025 and 2026,
+  runs the full test suite against the 2026 host build, and exercises
   packaged-sidecar smoke tests. It also enables
   `TRIPO_RUN_WINDOWS_CREDENTIAL_MANAGER_CANARY=1`, which uses a synthetic value
   under a unique `TripoMCPs/Tests/.../<pid>/<guid>` target for `CredWriteW`,
@@ -79,10 +87,42 @@ expected label and help relationships.
 Generated `bin/` and `obj/` files are ignored. A clean test receipt also
 requires `git diff --check` and a clean `git status`.
 
+## Before claiming Supported for a new Revit year
+
+Do **not** move a year from **Best-effort** to **Supported** in README,
+release notes, or pre-release copy until a real Revit smoke receipt exists for
+that exact year. CI compile-only (`/p:RevitYear=YYYY`) is necessary but not
+sufficient.
+
+Minimum smoke receipt for a year:
+
+1. Load the `.addin` from `Addins/YYYY` in that Revit version on Windows.
+2. Open **Add-Ins → Tripo → Tripo 3D** (ribbon entry visible).
+3. Run text generation (or an explicitly documented mock boundary when a paid
+   provider canary is unavailable) through to import, or record why import was
+   skipped with evidence.
+4. Record Revit build, host revision, and pass/fail in an issue, test log, or
+   release note linked from the Supported claim.
+
+Until that receipt exists, README and release assets may list the year only as
+**Best-effort** (compile-only).
+
+## Revit 2024 and earlier (`net48`) — deferred
+
+Revit 2024 and earlier run on `.NET Framework 4.8`. They cannot load the current
+`net8.0-windows` host. Supporting them requires a separate `net48` host
+project, packaging lane, and acceptance budget — not a `/p:RevitYear` override
+on the existing host.
+
+Do not treat Revit 2024 screenshots, community reports, or compile artifacts
+from the `.NET 8` host as evidence for 2024 support. Open a dedicated milestone
+only when there is stable external demand and budget for a second host
+generation.
+
 ## Evidence boundaries
 
 A green portable gate is not Revit acceptance. Real Revit 2026 validation on
-Windows remains required:
+Windows remains required; Revit 2025 has no smoke receipt yet.
 
 The isolated Windows CI credential canary proves only the native API in an
 ephemeral runner profile. Cleanup runs in `finally`, although a hard runner

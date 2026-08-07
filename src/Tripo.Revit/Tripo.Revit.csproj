@@ -7,6 +7,11 @@
     <RootNamespace>Tripo.Revit</RootNamespace>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <!-- Default 2026; override per build with /p:RevitYear=2025. -->
+    <RevitYear Condition="'$(RevitYear)' == ''">2026</RevitYear>
+    <RevitSdkVersion>$(RevitYear).0.0.9999</RevitSdkVersion>
+    <OutputPath>bin/$(Configuration)/$(TargetFramework)/$(RevitYear)/</OutputPath>
+    <IntermediateOutputPath>obj/$(Configuration)/$(TargetFramework)/$(RevitYear)/</IntermediateOutputPath>
     <!-- Revit desktop references conflict with macOS reference-pack facades.
          Windows CI keeps MSB3277 enabled; the non-Windows compile-only gate does not. -->
     <NoWarn Condition="'$(OS)' != 'Windows_NT'">$(NoWarn);MSB3277</NoWarn>
@@ -14,6 +19,7 @@
   <ItemGroup>
     <PackageReference
       Include="Autodesk.Revit.SDK"
+      VersionOverride="$(RevitSdkVersion)"
       ExcludeAssets="compile;runtime"
       GeneratePathProperty="true"
       PrivateAssets="all" />

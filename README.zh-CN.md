@@ -2,7 +2,7 @@
 
 [English](./README.md) | 简体中文
 
-Tripo-Revit 是面向 Autodesk Revit 2026 的独立社区适配器。AEC 用户可以在
+Tripo-Revit 是面向 Autodesk Revit（.NET 8 代际：2025 与 2026）的独立社区适配器。AEC 用户可以在
 modeless WPF window 内运行完整 text-to-model workflow；agentic client 可以通过
 MCP 使用同一套 workflow。通过校验的 OBJ 输出（仅几何，或附带 baked-diffuse
 材质与贴图）会导入执行 import 时处于 active 状态的可写 Revit project，目标可以是
@@ -26,18 +26,39 @@ sidecar 是唯一解析、存储或使用 Tripo API key 的进程。add-in 的 p
 只通过 authenticated local control channel 转发临时值并清空输入框；它不会把 key
 写入 `.rvt`、`.rfa` 或 Revit settings。
 
-> **当前状态：**add-in 以 Windows x64 上的 Revit 2026 为目标。仓库包含 portable
+> **当前状态：**add-in 以 Windows x64 上的 Revit 2025 与 2026 为目标（`.NET 8` /
+> `net8.0-windows`）。仓库包含 portable
 > host-control/workflow/MCP/process tests 与 package-compilation gates；Windows
-> CI lane 已配置为编译 modeless WPF window、ribbon command、sidecar launcher、
+> CI lane 会编译两个 host 年份、以 2026 host build 运行完整测试套件，并编译 modeless WPF window、ribbon command、sidecar launcher、
 > text workflow、credential dialog 与 bundled sidecar layout，并会在隔离 test
 > target 下对 synthetic Credential 执行 write/read/delete。真实 Revit 加载、
 > WPF/owner 行为、production-user Credential Manager interaction、
 > transaction/Undo、尺度/方向、性能和视觉验收仍是未完成的 gates。目前没有安装器、
 > 签名或自动更新机制。
 
+## Revit 版本支持
+
+公开承诺分三档。在取得该年真实 Revit 冒烟收据前，不要把任何年份写入 **Supported**（见
+[Testing and evidence](./docs/TESTING.md)）。
+
+| Revit 年份 | 状态 | 证据 |
+| --- | --- | --- |
+| **2026** | **Supported**（目标） | Windows CI 编译 + 打包 `Addins/2026`；真实 Revit 冒烟收据待完成 |
+| **2025** | **Best-effort** | Windows CI 仅 compile-only（`/p:RevitYear=2025`）；尚无真实 Revit 冒烟收据 |
+| **2024 及更早** | **Unsupported** | 需要独立的 `.NET Framework 4.8`（`net48`）宿主 — 默认不纳入，除非单独立项 |
+
+- **Supported** — CI 能编过、Release ZIP 含 `Addins/YYYY`，且该年至少一次真实 Revit 冒烟通过（加载 → ribbon → text workflow 或批准 mock → import）。
+- **Best-effort** — 能编或社区报告可用，但无该年验收收据。
+- **Unsupported** — 明确不装、不答疑（尤其跨 .NET 代际悬崖）。
+
+默认承诺窗口：同一 CLR 代际内的 **当前 Revit 年 + 前一年**。Revit 2024 及更早需在有明确需求与验收预算时，再开 `net48` host 独立里程碑。
+
+Bridge 启动描述符使用运行时 Revit `VersionNumber`（与 `tripo_host_context` 相同），而非编译期年份常量。
+
 ## 前置要求
 
-- Windows x64 与 Autodesk Revit 2026。
+- Windows x64 与 Autodesk Revit **2025 或 2026**（仅安装与 Revit 版本匹配的
+  `Addins/YYYY` 树）。2025 在取得冒烟收据前为 Best-effort；优先使用 2026 作为 Supported 目标安装。
 - 使用 .NET 8 SDK restore 和 build 项目。仓库选择 `8.0.100`，并允许在 .NET 8
   内按 `latestFeature` roll forward；restore 需要访问 NuGet。
 - 运行 framework-dependent MCP server 需要 .NET 8 runtime；SDK 已包含该 runtime。
@@ -46,40 +67,44 @@ sidecar 是唯一解析、存储或使用 Tripo API key 的进程。add-in 的 p
 - 一个可写、非 Family 的 Revit project，用于接收导入。
 - Revit、panel sidecar 与任何 MCP server 必须以同一个 Windows user 运行。
 
-宿主项目以 `net8.0-windows`、`x64` 为目标，并使用固定版本
-`2026.0.0.9999` 的 `Autodesk.Revit.SDK` package 作为编译引用。仓库没有记录该
+宿主项目以 `net8.0-windows`、`x64` 为目标，并在 build 时选择
+`Autodesk.Revit.SDK` package 版本 `$(RevitYear).0.0.9999`（默认 `2026`）。用
+`/p:RevitYear=2025` 或 `/p:RevitYear=2026` 覆盖。仓库没有记录该
 package 的已验证 hash 或 provenance receipt。生产 build 应验证该 dependency，或
-改用受控的 Revit 2026 安装/SDK 引用。
+改用受控的 Revit 安装/SDK 引用。
 
 ## 构建
 
 在仓库根目录通过 PowerShell 运行：
 
 ```powershell
-dotnet restore src/Tripo.Revit/Tripo.Revit.csproj
+$RevitYear = 2026
+
+dotnet restore src/Tripo.Revit/Tripo.Revit.csproj /p:RevitYear=$RevitYear
 dotnet restore src/Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj
 
 dotnet build src/Tripo.Revit/Tripo.Revit.csproj `
   --configuration Release `
-  --no-restore
+  --no-restore `
+  /p:RevitYear=$RevitYear
 
 dotnet build src/Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj `
   --configuration Release `
   --no-restore
 ```
 
-输出目录：
+输出目录（将 `2026` 替换为你的 `RevitYear`）：
 
 ```text
-src/Tripo.Revit/bin/Release/net8.0-windows/
+src/Tripo.Revit/bin/Release/net8.0-windows/2026/
 src/Tripo.Revit.Mcp/bin/Release/net8.0/
 ```
 
 非 Windows build 只能作为 compile-time 证据；加载和使用 add-in 需要 Windows 上的
-Revit 2026。
+Revit 2025 或 2026。
 
 构建 host project 时，也会构建 matching sidecar，并把完整输出复制到
-`src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`。只有可选 MCP 路径才需要单独的
+`src/Tripo.Revit/bin/Release/net8.0-windows/<RevitYear>/sidecar/`。只有可选 MCP 路径才需要单独的
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` 输出。Bridge protocol v3 与 host-control
 protocol v8 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
 
@@ -87,7 +112,7 @@ protocol v8 都没有向后兼容 shim，因此所有组件必须来自同一个
 
 安装或替换文件前先关闭 Revit。
 
-每用户部署布局是：
+每用户部署布局（Revit 2026 示例；Revit 2025 使用 `2025`）：
 
 ```text
 %APPDATA%\Autodesk\Revit\Addins\2026\
@@ -105,7 +130,7 @@ protocol v8 都没有向后兼容 shim，因此所有组件必须来自同一个
     └── 同一次 host build 的其他输出文件
 ```
 
-manifest 必须直接放在 `2026` 目录下。它的相对 assembly entry 是：
+manifest 必须直接放在与 Revit 版本匹配的 `YYYY` 目录下。它的相对 assembly entry 是：
 
 ```xml
 <Assembly>TripoRevit\Tripo.Revit.dll</Assembly>
@@ -114,8 +139,9 @@ manifest 必须直接放在 `2026` 目录下。它的相对 assembly entry 是�
 在仓库根目录运行以下 PowerShell，可填充该布局：
 
 ```powershell
-$source = (Resolve-Path "src\Tripo.Revit\bin\Release\net8.0-windows").Path
-$addinRoot = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2026"
+$RevitYear = 2026
+$source = (Resolve-Path "src\Tripo.Revit\bin\Release\net8.0-windows\$RevitYear").Path
+$addinRoot = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear"
 $pluginDirectory = Join-Path $addinRoot "TripoRevit"
 
 New-Item -ItemType Directory -Force $pluginDirectory | Out-Null
@@ -234,7 +260,7 @@ URL 下载的 PNG/JPEG/WebP 私有 snapshot。恢复期间应与 paid-operation 
 
 ## 使用 Revit window
 
-1. 启动 Revit 2026，打开可写的目标 project，然后选择
+1. 启动 Revit（2025 或 2026 — 与已安装的 `Addins/YYYY` 树匹配），打开可写的目标 project，然后选择
    **Add-Ins → Tripo → Tripo 3D**。重复点击会激活同一个 modeless window。
    window 仍持有 workflow state 时，点击关闭按钮只会隐藏它，不会丢弃 session；
    再次使用 ribbon command 即可显示。
@@ -304,7 +330,7 @@ HTTPS 图片 URL；真实 Revit 与付费 provider acceptance 仍是独立 gate�
 可选 MCP 路径：
 
 1. 在 Revit 关闭时安装 add-in。
-2. 启动 Revit 2026。
+2. 启动 Revit（与已安装的 `Addins/YYYY` 树匹配）。
 3. 打开要接收模型的可写 project。
 4. 启动或重启 MCP client，让 server 收到预期环境。
 5. 确认 client 列出下文九个 tools。
@@ -461,7 +487,7 @@ mutation/idempotency 路径的证据，不是视觉渲染验收。
 
 ### `host_unavailable`
 
-检查 Revit 2026 是否正在运行、manifest 与 DLL layout 是否完全匹配、是否已重启
+检查 Revit 是否正在运行且已安装匹配的 `Addins/YYYY`、manifest 与 DLL layout 是否完全匹配、是否已重启
 Revit、是否出现 bridge-startup dialog、两个进程是否使用同一 Windows account、
 `TRIPO_HOST_PID` 是否正确，以及 `TRIPO_LOCAL_DATA_DIR` 是否在两端都未设置或完全
 相同。还应从同一个 revision 替换完整 add-in 与 MCP 输出并重启两个进程；
@@ -546,7 +572,8 @@ appearance asset，有效 MTL color 仍会应用，但 bitmap 不会绑定。
   放置第一个可用 symbol 前不再验证其 content 或 provenance。
 - 没有 one-call paid workflow、安装器、签名或自动更新。
 - Production HTTP connections 有意不使用 system proxies。
-- 尚未完成真实 Revit 2026 runtime acceptance。
+- 尚未完成任何 Revit 年份的真实冒烟收据（2026 为 Supported 目标且 runtime 验收仍开放；2025 仅 compile-only）。
+- Revit 2024 及更早（.NET Framework / `net48`）为 Unsupported，需单独 host 里程碑后才可能支持。
 
 详细信任与验收边界见 [Architecture](./docs/ARCHITECTURE.md)、
 [Materials design](./docs/MATERIALS-DESIGN.md)、

@@ -31,9 +31,10 @@ public sealed class TripoRevitApplication : IExternalApplication, IDisposable
             RevitBridgeDispatcher dispatcher = new(
                 _eventPump,
                 _documentSessions);
+            string revitVersion = application.ControlledApplication.VersionNumber;
             _bridgeServer = new Tripo.Bridge.NamedPipeBridgeServer(
                 "revit",
-                "2026",
+                revitVersion,
                 [
                     Tripo.Bridge.BridgeConstants.ContextMethod,
                     Tripo.Bridge.BridgeConstants.ImportMeshMethod,

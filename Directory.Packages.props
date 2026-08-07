@@ -3,6 +3,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Default catalog entry; Tripo.Revit overrides per build via $(RevitSdkVersion). -->
     <PackageVersion Include="Autodesk.Revit.SDK" Version="2026.0.0.9999" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.7" />

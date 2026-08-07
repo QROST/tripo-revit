@@ -2,7 +2,8 @@
 
 English | [简体中文](./README.zh-CN.md)
 
-Tripo-Revit is an independent community adapter for Autodesk Revit 2026. AEC
+Tripo-Revit is an independent community adapter for Autodesk Revit (.NET 8
+generation: 2025 and 2026). AEC
 users can run the complete text-to-model workflow from a modeless WPF window;
 agentic clients can use the same workflow through MCP. Validated OBJ output —
 geometry only, or with baked-diffuse materials and textures — is imported into
@@ -29,9 +30,12 @@ key. The add-in's password dialog only forwards a transient value over the
 authenticated local control channel and clears the field; it does not write
 the key to `.rvt`, `.rfa`, or Revit settings.
 
-> **Current status:** the add-in targets Revit 2026 on Windows x64. Portable
+> **Current status:** the add-in targets Revit 2025 and 2026 on Windows x64
+> (`.NET 8` / `net8.0-windows`). Portable
 > host-control/workflow/MCP/process tests and package-compilation gates exist.
-> The Windows CI lane is configured to compile the modeless WPF window, ribbon
+> The Windows CI lane compiles both host years, runs the full test suite against
+> the 2026 host build, and exercises
+> the modeless WPF window, ribbon
 > command, sidecar
 > launcher, text workflow, credential dialog, and bundled sidecar layout, and
 > to write/read/delete a synthetic credential under an isolated test target.
@@ -41,9 +45,38 @@ the key to `.rvt`, `.rfa`, or Revit settings.
 > still open gates. There is no installer, signing, or automatic update
 > mechanism.
 
+## Revit version support
+
+Public commitment uses three tiers. Do not move a year to **Supported** until
+that year's real Revit smoke receipt exists (see
+[Testing and evidence](./docs/TESTING.md)).
+
+| Revit year | Status | Evidence |
+| --- | --- | --- |
+| **2026** | **Supported** (target) | Windows CI compile + packaged `Addins/2026`; real Revit smoke receipt pending |
+| **2025** | **Best-effort** | Windows CI compile-only (`/p:RevitYear=2025`); no real Revit smoke receipt yet |
+| **2024 and earlier** | **Unsupported** | Requires a separate `.NET Framework 4.8` (`net48`) host — deferred unless explicitly scoped |
+
+- **Supported** — CI compiles, Release ZIP includes `Addins/YYYY`, and at least
+  one real Revit smoke receipt for that year (load → ribbon → text workflow or
+  approved mock → import).
+- **Best-effort** — CI compile or community reports; no formal Supported claim
+  until a smoke receipt exists.
+- **Unsupported** — do not install; no support (especially across the .NET
+  generation cliff between Revit 2024 and 2025).
+
+Default commitment window: **current Revit year + prior year** within the same
+CLR generation. Revit 2024 and earlier remain out of scope until a dedicated
+`net48` host milestone is opened with explicit demand and acceptance budget.
+
+The bridge startup descriptor reports the live Revit `VersionNumber` (same field
+as `tripo_host_context`), not a compile-time year constant.
+
 ## Prerequisites
 
-- Windows x64 with Autodesk Revit 2026.
+- Windows x64 with Autodesk Revit **2025 or 2026** (install only the matching
+  `Addins/YYYY` tree from a release). Revit 2025 is Best-effort until a smoke
+  receipt exists; prefer 2026 for Supported-target installs.
 - .NET 8 SDK to restore and build the projects. The repository selects
   `8.0.100` with `latestFeature` roll-forward inside .NET 8. Restore requires
   NuGet access.
@@ -55,42 +88,46 @@ the key to `.rvt`, `.rfa`, or Revit settings.
 - Revit, the panel sidecar, and any MCP server must run as the same Windows
   user.
 
-The host project targets `net8.0-windows`, `x64`, and the pinned
-`Autodesk.Revit.SDK` package version `2026.0.0.9999` for compile-time
-references. The repository does not record a verified package hash or
+The host project targets `net8.0-windows`, `x64`, and the
+`Autodesk.Revit.SDK` package version `$(RevitYear).0.0.9999` selected at
+build time (default `2026`). Override with `/p:RevitYear=2025` or
+`/p:RevitYear=2026`. The repository does not record a verified package hash or
 provenance receipt. For a production build, verify that dependency or replace
-it with controlled Revit 2026 installation/SDK references.
+it with controlled Revit installation/SDK references for the target year.
 
 ## Build
 
 Run from the repository root in PowerShell:
 
 ```powershell
-dotnet restore src/Tripo.Revit/Tripo.Revit.csproj
+$RevitYear = 2026
+
+dotnet restore src/Tripo.Revit/Tripo.Revit.csproj /p:RevitYear=$RevitYear
 dotnet restore src/Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj
 
 dotnet build src/Tripo.Revit/Tripo.Revit.csproj `
   --configuration Release `
-  --no-restore
+  --no-restore `
+  /p:RevitYear=$RevitYear
 
 dotnet build src/Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj `
   --configuration Release `
   --no-restore
 ```
 
-Outputs:
+Outputs (replace `2026` with your `RevitYear`):
 
 ```text
-src/Tripo.Revit/bin/Release/net8.0-windows/
+src/Tripo.Revit/bin/Release/net8.0-windows/2026/
 src/Tripo.Revit.Mcp/bin/Release/net8.0/
 ```
 
 A non-Windows build is compile-time evidence only. Loading and using the add-in
-requires Revit 2026 on Windows.
+requires Revit 2025 or 2026 on Windows.
 
 Building the host project also builds the matching sidecar and copies its
 complete output into
-`src/Tripo.Revit/bin/Release/net8.0-windows/sidecar/`. The separate
+`src/Tripo.Revit/bin/Release/net8.0-windows/<RevitYear>/sidecar/`. The separate
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` output is needed only for the optional MCP
 path. Bridge protocol v3 and host-control protocol v8 have no
 backward-compatibility shim, so deploy all components from the same repository
@@ -100,7 +137,8 @@ revision.
 
 Close Revit before installing or replacing files.
 
-The per-user deployment layout is:
+The per-user deployment layout (example for Revit 2026; use `2025` for Revit
+2025):
 
 ```text
 %APPDATA%\Autodesk\Revit\Addins\2026\
@@ -118,7 +156,8 @@ The per-user deployment layout is:
     └── other files from the same host build output
 ```
 
-The manifest must remain directly under the `2026` directory. Its relative
+The manifest must remain directly under the `YYYY` directory matching your
+Revit version. Its relative
 assembly entry is:
 
 ```xml
@@ -128,8 +167,9 @@ assembly entry is:
 From the repository root, this PowerShell example populates that layout:
 
 ```powershell
-$source = (Resolve-Path "src\Tripo.Revit\bin\Release\net8.0-windows").Path
-$addinRoot = Join-Path $env:APPDATA "Autodesk\Revit\Addins\2026"
+$RevitYear = 2026
+$source = (Resolve-Path "src\Tripo.Revit\bin\Release\net8.0-windows\$RevitYear").Path
+$addinRoot = Join-Path $env:APPDATA "Autodesk\Revit\Addins\$RevitYear"
 $pluginDirectory = Join-Path $addinRoot "TripoRevit"
 
 New-Item -ItemType Directory -Force $pluginDirectory | Out-Null
@@ -260,7 +300,7 @@ URL. Preserve it with the paid-operation journal during recovery.
 
 ## Use the Revit window
 
-1. Start Revit 2026, open the writable target project, and choose
+1. Start Revit (2025 or 2026 — matching your installed `Addins/YYYY` tree), open the writable target project, and choose
    **Add-Ins → Tripo → Tripo 3D**. Repeated clicks activate the same modeless
    window. If it owns workflow state, clicking the close button hides it
    silently; use the ribbon command to show it again.
@@ -361,7 +401,7 @@ is performed by the sidecar before the paid operation is prepared.
 For the optional MCP path:
 
 1. Install the add-in while Revit is closed.
-2. Start Revit 2026.
+2. Start Revit (matching your installed `Addins/YYYY` tree).
 3. Open the writable project that should receive the model.
 4. Start or restart the MCP client so the server receives the intended
    environment.
@@ -545,7 +585,7 @@ mutation/idempotency evidence, not visual-rendering acceptance.
 
 ### `host_unavailable`
 
-Check that Revit 2026 is running, the manifest and DLL layout match exactly,
+Check that Revit is running with the matching `Addins/YYYY` install, the manifest and DLL layout match exactly,
 Revit was restarted, no bridge-startup dialog appeared, both processes use the
 same Windows account, any `TRIPO_HOST_PID` is correct, and
 `TRIPO_LOCAL_DATA_DIR` is either unset on both sides or identical on both
@@ -648,7 +688,8 @@ bound.
   symbol is placed.
 - No installer, signing, or automatic update. MCP remains staged (no one-call paid MCP tool).
 - Production HTTP connections intentionally do not use system proxies.
-- No completed real Revit 2026 runtime acceptance.
+- No completed real Revit smoke receipt for any year (2026 Supported target with runtime acceptance open; 2025 compile-only).
+- Revit 2024 and earlier (.NET Framework / `net48`) are Unsupported until a separate host milestone ships.
 
 See [Architecture](./docs/ARCHITECTURE.md),
 [Materials design](./docs/MATERIALS-DESIGN.md),

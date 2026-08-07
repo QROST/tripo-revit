@@ -8,17 +8,18 @@ namespace Tripo.Mcp.Tests;
 public sealed class McpProcessSmokeTests
 {
 #if !TRIPO_SKIP_REVIT_HOST_BUILD
-    public static TheoryData<string, string, string, string>
+    public static TheoryData<string, string, string, string, string>
         PackagedSidecars
     {
         get
         {
-            TheoryData<string, string, string, string> data = new()
+            TheoryData<string, string, string, string, string> data = new()
             {
                 {
                     "src/Tripo.Revit",
                     "revit",
                     "net8.0-windows",
+                    "2026",
                     "Tripo.Revit.Mcp.dll"
                 },
             };
@@ -122,6 +123,7 @@ public sealed class McpProcessSmokeTests
         string projectDirectory,
         string host,
         string hostTargetFramework,
+        string revitYear,
         string assemblyName)
     {
         string root = FindRepositoryRoot();
@@ -134,6 +136,7 @@ public sealed class McpProcessSmokeTests
             "bin",
             configuration,
             hostTargetFramework,
+            revitYear,
             "sidecar",
             assemblyName);
         Assert.True(

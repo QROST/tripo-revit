@@ -30,9 +30,13 @@ catalog receipt for that year:
 | 2025 | `2025.0.2.419` | `lRRJmyfUxPHXCTgY5u1p3s0elGfKLtaHe/m4q/lfr4RfiOJwHQRxvU2wb8O638GMX/Xdk309x1tGHvSsQH1otw==` |
 | 2026 | `2026.0.0.9999` | `3ybbMe0lz0mcvDbLikwvhAToZvd68Ju1NpsQ8BYbleench4P6jft0G8ngaxK3KO4sZIu5NlLZSUOHkQj/9WLpg==` |
 
-The gate compares the cached `.nupkg.sha512` receipt and independently hashes
-the `.nupkg` bytes. A matching package is dependency provenance only; it does
-not establish real Revit compatibility or Autodesk endorsement.
+The gate compares the cached `.nupkg.sha512` receipt, independently hashes the
+`.nupkg` bytes, and hashes the extracted `RevitAPI.dll` and `RevitAPIUI.dll`
+files actually consumed by compilation against source pins derived from that
+archive. NuGet restore graphs live under `obj/nuget/<RevitYear>/`, so sequential
+2025/2026 restores cannot overwrite each other's `project.assets.json`. A
+matching dependency is provenance only; it does not establish real Revit
+compatibility or Autodesk endorsement.
 
 The full gate must produce (replace `2026` with your `RevitYear`):
 

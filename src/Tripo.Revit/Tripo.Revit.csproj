@@ -12,8 +12,12 @@
     <RevitYear Condition="'$(RevitYear)' == ''">2026</RevitYear>
     <RevitSdkVersion Condition="'$(RevitYear)' == '2025'">2025.0.2.419</RevitSdkVersion>
     <RevitSdkExpectedSha512 Condition="'$(RevitYear)' == '2025'">lRRJmyfUxPHXCTgY5u1p3s0elGfKLtaHe/m4q/lfr4RfiOJwHQRxvU2wb8O638GMX/Xdk309x1tGHvSsQH1otw==</RevitSdkExpectedSha512>
+    <RevitApiExpectedSha512 Condition="'$(RevitYear)' == '2025'">M2G7K/MH/iiCzKoNq0w9hbqpn2cJha7u3GbHXisBfQPmj/TpXebP3ndTzzTOGvlZDMcrp+ul919vg5ShlyW6YA==</RevitApiExpectedSha512>
+    <RevitApiUiExpectedSha512 Condition="'$(RevitYear)' == '2025'">PCajmT3vjJcPQvK4p5hVh2vk3Op+p3T+ZqzSEdRH6vT4Drz9OCOOlRmanPW6HZNPTmqI2loPWIvbPBQ4x6mWRg==</RevitApiUiExpectedSha512>
     <RevitSdkVersion Condition="'$(RevitYear)' == '2026'">2026.0.0.9999</RevitSdkVersion>
     <RevitSdkExpectedSha512 Condition="'$(RevitYear)' == '2026'">3ybbMe0lz0mcvDbLikwvhAToZvd68Ju1NpsQ8BYbleench4P6jft0G8ngaxK3KO4sZIu5NlLZSUOHkQj/9WLpg==</RevitSdkExpectedSha512>
+    <RevitApiExpectedSha512 Condition="'$(RevitYear)' == '2026'">kuOXJqHhDKzJMJpRNrmyEJ3+g3THjHw67FxpOEug9vS8gyJLMkoHpdIOSS9sCmbY5Hs7awQdz2dcyMwnZhIYMA==</RevitApiExpectedSha512>
+    <RevitApiUiExpectedSha512 Condition="'$(RevitYear)' == '2026'">3jftCi1ByO51SjwbfNCfu+i4ISiDRiou9cLs/RudqELx4gi8lU28iSXJzXeXzcdfxWNs1HMX5yLmdsdim2h3dg==</RevitApiUiExpectedSha512>
     <!-- The paths below already contain the target framework. Without this
          opt-out, the SDK appends it a second time after project evaluation. -->
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -35,7 +39,7 @@
     Name="ValidateRevitSdkSelection"
     BeforeTargets="CollectPackageReferences;PrepareForBuild">
     <Error
-      Condition="'$(RevitSdkVersion)' == '' or '$(RevitSdkExpectedSha512)' == ''"
+      Condition="'$(RevitSdkVersion)' == '' or '$(RevitSdkExpectedSha512)' == '' or '$(RevitApiExpectedSha512)' == '' or '$(RevitApiUiExpectedSha512)' == ''"
       Text="Unsupported RevitYear '$(RevitYear)'. Supported compile targets are 2025 and 2026." />
   </Target>
   <Target
@@ -77,6 +81,26 @@
     <Error
       Condition="'$(_RevitSdkActualSha512)' != '$(RevitSdkExpectedSha512)'"
       Text="Autodesk.Revit.SDK $(RevitSdkVersion) package content does not match the source-pinned SHA-512." />
+    <ItemGroup>
+      <_RevitSdkReference Include="$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPI.dll">
+        <ExpectedSha512>$(RevitApiExpectedSha512)</ExpectedSha512>
+      </_RevitSdkReference>
+      <_RevitSdkReference Include="$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPIUI.dll">
+        <ExpectedSha512>$(RevitApiUiExpectedSha512)</ExpectedSha512>
+      </_RevitSdkReference>
+    </ItemGroup>
+    <Error
+      Condition="!Exists('%(_RevitSdkReference.Identity)')"
+      Text="Pinned Autodesk.Revit.SDK reference is missing: %(_RevitSdkReference.Identity)." />
+    <GetFileHash
+      Files="@(_RevitSdkReference)"
+      Algorithm="SHA512"
+      HashEncoding="base64">
+      <Output TaskParameter="Items" ItemName="_RevitSdkHashedReference" />
+    </GetFileHash>
+    <Error
+      Condition="'%(_RevitSdkHashedReference.FileHash)' != '%(_RevitSdkHashedReference.ExpectedSha512)'"
+      Text="Autodesk.Revit.SDK $(RevitSdkVersion) extracted reference %(_RevitSdkHashedReference.Filename)%(_RevitSdkHashedReference.Extension) does not match the source-pinned SHA-512." />
   </Target>
   <ItemGroup>
     <Reference Include="RevitAPI">

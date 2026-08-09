@@ -76,9 +76,12 @@ Bridge 启动描述符使用运行时 Revit `VersionNumber`（与 `tripo_host_co
 [2026](https://www.nuget.org/packages/Autodesk.Revit.SDK/2026.0.0.9999) 条目。
 用 `/p:RevitYear=2025` 或 `/p:RevitYear=2026` 覆盖；其他年份会 fail closed。
 源码还 pin 了每个 package 在 NuGet 官方目录中的 SHA-512。build 会在解析引用前，
-把 NuGet cache 的 `.sha512` receipt 和实际 `.nupkg` 字节都与该 pin 比较。这是
-dependency content provenance，不是 add-in 已在真实 Revit 中加载或正确运行的证据；
-生产 build 仍应使用受控 feed/cache，并保留 restore/build receipt。
+把 NuGet cache 的 `.sha512` receipt 和实际 `.nupkg` 字节都与该 pin 比较，并另外
+hash 编译实际读取的 `RevitAPI.dll` 与 `RevitAPIUI.dll`，对照由已验证 archive
+导出的源码 pin。2025/2026 的 restore graph 按年份隔离，不会在顺序 build 时共用
+`project.assets.json`。这是 dependency content provenance，不是 add-in 已在真实
+Revit 中加载或正确运行的证据；生产 build 仍应使用受控 feed/cache，并保留
+restore/build receipt。
 
 ## 构建
 

@@ -1,5 +1,9 @@
 <Project>
   <PropertyGroup>
+    <!-- NuGet writes project.assets.json under MSBuildProjectExtensionsPath.
+         Revit 2025 and 2026 must never overwrite each other's restore graph. -->
+    <RevitYear Condition="'$(MSBuildProjectName)' == 'Tripo.Revit' and '$(RevitYear)' == ''">2026</RevitYear>
+    <MSBuildProjectExtensionsPath Condition="'$(MSBuildProjectName)' == 'Tripo.Revit'">$(MSBuildProjectDirectory)/obj/nuget/$(RevitYear)/</MSBuildProjectExtensionsPath>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <Deterministic>true</Deterministic>
     <ImplicitUsings>enable</ImplicitUsings>

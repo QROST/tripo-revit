@@ -97,10 +97,13 @@ official NuGet catalog entries for
 Override with `/p:RevitYear=2025` or `/p:RevitYear=2026`; any other year fails
 closed. Source also pins the official NuGet catalog SHA-512 for each package.
 Before resolving references, the build checks both NuGet's cached `.sha512`
-receipt and the actual `.nupkg` bytes against that pin. This is dependency
-content provenance, not evidence that the add-in loaded or behaved correctly in
-Revit; production builds must still use a controlled feed/cache and preserve
-the restore/build receipt.
+receipt and the actual `.nupkg` bytes against that pin. It separately hashes the
+extracted `RevitAPI.dll` and `RevitAPIUI.dll` files that compilation consumes,
+using source pins derived from the verified archive. Restore graphs are isolated
+per Revit year so sequential 2025/2026 builds cannot reuse each other's
+`project.assets.json`. This is dependency content provenance, not evidence that
+the add-in loaded or behaved correctly in Revit; production builds must still
+use a controlled feed/cache and preserve the restore/build receipt.
 
 ## Build
 

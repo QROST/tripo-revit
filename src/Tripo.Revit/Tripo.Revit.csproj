@@ -7,9 +7,14 @@
     <RootNamespace>Tripo.Revit</RootNamespace>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <!-- Default 2026; override per build with /p:RevitYear=2025. -->
+    <!-- Default 2026; override per build with /p:RevitYear=2025. Keep these
+         exact package versions in sync with Autodesk's NuGet catalog. -->
     <RevitYear Condition="'$(RevitYear)' == ''">2026</RevitYear>
-    <RevitSdkVersion>$(RevitYear).0.0.9999</RevitSdkVersion>
+    <RevitSdkVersion Condition="'$(RevitYear)' == '2025'">2025.0.2.419</RevitSdkVersion>
+    <RevitSdkVersion Condition="'$(RevitYear)' == '2026'">2026.0.0.9999</RevitSdkVersion>
+    <!-- The paths below already contain the target framework. Without this
+         opt-out, the SDK appends it a second time after project evaluation. -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>bin/$(Configuration)/$(TargetFramework)/$(RevitYear)/</OutputPath>
     <IntermediateOutputPath>obj/$(Configuration)/$(TargetFramework)/$(RevitYear)/</IntermediateOutputPath>
     <!-- Revit desktop references conflict with macOS reference-pack facades.
@@ -24,6 +29,13 @@
       GeneratePathProperty="true"
       PrivateAssets="all" />
   </ItemGroup>
+  <Target
+    Name="ValidateRevitSdkSelection"
+    BeforeTargets="CollectPackageReferences;PrepareForBuild">
+    <Error
+      Condition="'$(RevitSdkVersion)' == ''"
+      Text="Unsupported RevitYear '$(RevitYear)'. Supported compile targets are 2025 and 2026." />
+  </Target>
   <ItemGroup>
     <Reference Include="RevitAPI">
       <HintPath>$(PkgAutodesk_Revit_SDK)/ref/net8.0/RevitAPI.dll</HintPath>

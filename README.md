@@ -33,12 +33,12 @@ the key to `.rvt`, `.rfa`, or Revit settings.
 > **Current status:** the add-in targets Revit 2025 and 2026 on Windows x64
 > (`.NET 8` / `net8.0-windows`). Portable
 > host-control/workflow/MCP/process tests and package-compilation gates exist.
-> The Windows CI lane compiles both host years, runs the full test suite against
-> the 2026 host build, and exercises
-> the modeless WPF window, ribbon
-> command, sidecar
-> launcher, text workflow, credential dialog, and bundled sidecar layout, and
-> to write/read/delete a synthetic credential under an isolated test target.
+> The Windows CI definition compiles both host years and runs the non-interactive
+> test suite against the 2026 build, including a packaged-sidecar process smoke
+> test and an isolated synthetic Credential Manager canary. Compilation proves
+> that the WPF window, ribbon command, sidecar launcher, workflow calls, and
+> credential dialog type-check against the selected SDK; CI does not launch or
+> interact with Revit or render the WPF window.
 > Real Revit loading, WPF/owner behavior, production-user Credential Manager
 > interaction,
 > transaction/Undo, scale/orientation, performance, and visual acceptance are
@@ -53,8 +53,8 @@ that year's real Revit smoke receipt exists (see
 
 | Revit year | Status | Evidence |
 | --- | --- | --- |
-| **2026** | **Supported** (target) | Windows CI compile + packaged `Addins/2026`; real Revit smoke receipt pending |
-| **2025** | **Best-effort** | Windows CI compile-only (`/p:RevitYear=2025`); no real Revit smoke receipt yet |
+| **2026** | **Best-effort** | Windows compile/package target; no real Revit 2026 smoke receipt yet |
+| **2025** | **Best-effort** | Windows compile/package target; no real Revit 2025 smoke receipt yet |
 | **2024 and earlier** | **Unsupported** | Requires a separate `.NET Framework 4.8` (`net48`) host — deferred unless explicitly scoped |
 
 - **Supported** — CI compiles, Release ZIP includes `Addins/YYYY`, and at least
@@ -75,8 +75,8 @@ as `tripo_host_context`), not a compile-time year constant.
 ## Prerequisites
 
 - Windows x64 with Autodesk Revit **2025 or 2026** (install only the matching
-  `Addins/YYYY` tree from a release). Revit 2025 is Best-effort until a smoke
-  receipt exists; prefer 2026 for Supported-target installs.
+  `Addins/YYYY` tree from a release). Both years are Best-effort until an
+  exact-year real Revit smoke receipt exists.
 - .NET 8 SDK to restore and build the projects. The repository selects
   `8.0.100` with `latestFeature` roll-forward inside .NET 8. Restore requires
   NuGet access.
@@ -88,12 +88,19 @@ as `tripo_host_context`), not a compile-time year constant.
 - Revit, the panel sidecar, and any MCP server must run as the same Windows
   user.
 
-The host project targets `net8.0-windows`, `x64`, and the
-`Autodesk.Revit.SDK` package version `$(RevitYear).0.0.9999` selected at
-build time (default `2026`). Override with `/p:RevitYear=2025` or
-`/p:RevitYear=2026`. The repository does not record a verified package hash or
-provenance receipt. For a production build, verify that dependency or replace
-it with controlled Revit installation/SDK references for the target year.
+The host project targets `net8.0-windows`, `x64`, and maps each build year to
+an exact `Autodesk.Revit.SDK` package: `2025.0.2.419` for Revit 2025 and
+`2026.0.0.9999` for Revit 2026 (the default). The pins correspond to the
+official NuGet catalog entries for
+[2025](https://www.nuget.org/packages/Autodesk.Revit.SDK/2025.0.2.419) and
+[2026](https://www.nuget.org/packages/Autodesk.Revit.SDK/2026.0.0.9999).
+Override with `/p:RevitYear=2025` or `/p:RevitYear=2026`; any other year fails
+closed. Source also pins the official NuGet catalog SHA-512 for each package.
+Before resolving references, the build checks both NuGet's cached `.sha512`
+receipt and the actual `.nupkg` bytes against that pin. This is dependency
+content provenance, not evidence that the add-in loaded or behaved correctly in
+Revit; production builds must still use a controlled feed/cache and preserve
+the restore/build receipt.
 
 ## Build
 
@@ -688,7 +695,8 @@ bound.
   symbol is placed.
 - No installer, signing, or automatic update. MCP remains staged (no one-call paid MCP tool).
 - Production HTTP connections intentionally do not use system proxies.
-- No completed real Revit smoke receipt for any year (2026 Supported target with runtime acceptance open; 2025 compile-only).
+- No completed real Revit smoke receipt for either 2025 or 2026; both remain
+  Best-effort compile/package targets.
 - Revit 2024 and earlier (.NET Framework / `net48`) are Unsupported until a separate host milestone ships.
 
 See [Architecture](./docs/ARCHITECTURE.md),

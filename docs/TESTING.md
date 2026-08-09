@@ -1,7 +1,8 @@
 # Testing and evidence
 
-This repository ships the Revit adapter for the `.NET 8` generation (2025 and
-2026) and its matching local sidecar/MCP executable.
+This repository defines build/package targets for the Revit `.NET 8`
+generation (2025 and 2026) and its matching local sidecar/MCP executable. Both
+host years remain Best-effort until exact-year real Revit smoke receipts exist.
 
 ## Windows full gate
 
@@ -19,6 +20,19 @@ Compile-only gate for an additional host year:
 dotnet restore src/Tripo.Revit/Tripo.Revit.csproj /p:RevitYear=2025
 dotnet build src/Tripo.Revit/Tripo.Revit.csproj --configuration Release --no-restore /p:RevitYear=2025
 ```
+
+Each host build fails before reference resolution unless the restored
+`Autodesk.Revit.SDK` package version and content match the source-pinned NuGet
+catalog receipt for that year:
+
+| Revit year | Package version | Expected SHA-512 (base64) |
+| --- | --- | --- |
+| 2025 | `2025.0.2.419` | `lRRJmyfUxPHXCTgY5u1p3s0elGfKLtaHe/m4q/lfr4RfiOJwHQRxvU2wb8O638GMX/Xdk309x1tGHvSsQH1otw==` |
+| 2026 | `2026.0.0.9999` | `3ybbMe0lz0mcvDbLikwvhAToZvd68Ju1NpsQ8BYbleench4P6jft0G8ngaxK3KO4sZIu5NlLZSUOHkQj/9WLpg==` |
+
+The gate compares the cached `.nupkg.sha512` receipt and independently hashes
+the `.nupkg` bytes. A matching package is dependency provenance only; it does
+not establish real Revit compatibility or Autodesk endorsement.
 
 The full gate must produce (replace `2026` with your `RevitYear`):
 
@@ -121,8 +135,9 @@ generation.
 
 ## Evidence boundaries
 
-A green portable gate is not Revit acceptance. Real Revit 2026 validation on
-Windows remains required; Revit 2025 has no smoke receipt yet.
+A green portable gate is not Revit acceptance. Real Revit validation on Windows
+remains required for both 2025 and 2026; neither year has a smoke receipt in the
+repository yet.
 
 The isolated Windows CI credential canary proves only the native API in an
 ephemeral runner profile. Cleanup runs in `finally`, although a hard runner

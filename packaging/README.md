@@ -17,7 +17,17 @@ Host build outputs land under
 `src/Tripo.Revit/bin/Release/net8.0-windows/<RevitYear>/`. Override packaged
 years with `-RevitYears 2026` when needed.
 
-The tag workflow uploads only a short-lived GitHub Actions artifact. It does
-not create a GitHub Release, publish an installer, sign binaries, or establish
-real Revit acceptance. Candidate redistribution is governed by the Apache License, Version 2.0;
-see the repository root [`LICENSE`](../LICENSE) and [`NOTICE`](../NOTICE).
+> **BLOCKED release gate:** the current `release-candidate` workflow can run
+> from the default branch for an already-published version, creates or mutates a
+> GitHub Release, and uses asset overwrite. Do not dispatch it or reuse
+> `v0.1.0` for current `main`. Before the next release, advance `VERSION` and
+> `VersionPrefix`, create a reviewed new tag, make the workflow check out and
+> verify that immutable tag/commit, and make any existing release or asset a
+> hard failure. No source revision after `v0.1.0` has release provenance merely
+> because its build passes.
+
+The workflow currently also uploads a short-lived GitHub Actions artifact. It
+does not publish an installer, sign binaries, or establish real Revit
+acceptance. Candidate redistribution is governed by the Apache License, Version
+2.0; see the repository root [`LICENSE`](../LICENSE) and
+[`NOTICE`](../NOTICE).

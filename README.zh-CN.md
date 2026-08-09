@@ -29,9 +29,11 @@ sidecar 是唯一解析、存储或使用 Tripo API key 的进程。add-in 的 p
 > **当前状态：**add-in 以 Windows x64 上的 Revit 2025 与 2026 为目标（`.NET 8` /
 > `net8.0-windows`）。仓库包含 portable
 > host-control/workflow/MCP/process tests 与 package-compilation gates；Windows
-> CI lane 会编译两个 host 年份、以 2026 host build 运行完整测试套件，并编译 modeless WPF window、ribbon command、sidecar launcher、
-> text workflow、credential dialog 与 bundled sidecar layout，并会在隔离 test
-> target 下对 synthetic Credential 执行 write/read/delete。真实 Revit 加载、
+> CI 定义会编译两个 host 年份，并针对 2026 build 运行非交互测试套件，其中包括
+> packaged-sidecar process smoke test 与隔离的 synthetic Credential Manager
+> canary。编译只能证明 modeless WPF window、ribbon command、sidecar launcher、
+> workflow calls 与 credential dialog 能针对所选 SDK 通过类型检查；CI 不会启动或
+> 操作 Revit，也不会渲染 WPF window。真实 Revit 加载、
 > WPF/owner 行为、production-user Credential Manager interaction、
 > transaction/Undo、尺度/方向、性能和视觉验收仍是未完成的 gates。目前没有安装器、
 > 签名或自动更新机制。
@@ -43,8 +45,8 @@ sidecar 是唯一解析、存储或使用 Tripo API key 的进程。add-in 的 p
 
 | Revit 年份 | 状态 | 证据 |
 | --- | --- | --- |
-| **2026** | **Supported**（目标） | Windows CI 编译 + 打包 `Addins/2026`；真实 Revit 冒烟收据待完成 |
-| **2025** | **Best-effort** | Windows CI 仅 compile-only（`/p:RevitYear=2025`）；尚无真实 Revit 冒烟收据 |
+| **2026** | **Best-effort** | Windows 编译/打包目标；尚无真实 Revit 2026 冒烟收据 |
+| **2025** | **Best-effort** | Windows 编译/打包目标；尚无真实 Revit 2025 冒烟收据 |
 | **2024 及更早** | **Unsupported** | 需要独立的 `.NET Framework 4.8`（`net48`）宿主 — 默认不纳入，除非单独立项 |
 
 - **Supported** — CI 能编过、Release ZIP 含 `Addins/YYYY`，且该年至少一次真实 Revit 冒烟通过（加载 → ribbon → text workflow 或批准 mock → import）。
@@ -58,7 +60,7 @@ Bridge 启动描述符使用运行时 Revit `VersionNumber`（与 `tripo_host_co
 ## 前置要求
 
 - Windows x64 与 Autodesk Revit **2025 或 2026**（仅安装与 Revit 版本匹配的
-  `Addins/YYYY` 树）。2025 在取得冒烟收据前为 Best-effort；优先使用 2026 作为 Supported 目标安装。
+  `Addins/YYYY` 树）。两个年份在分别取得真实 Revit 冒烟收据前都仅为 Best-effort。
 - 使用 .NET 8 SDK restore 和 build 项目。仓库选择 `8.0.100`，并允许在 .NET 8
   内按 `latestFeature` roll forward；restore 需要访问 NuGet。
 - 运行 framework-dependent MCP server 需要 .NET 8 runtime；SDK 已包含该 runtime。
@@ -67,11 +69,16 @@ Bridge 启动描述符使用运行时 Revit `VersionNumber`（与 `tripo_host_co
 - 一个可写、非 Family 的 Revit project，用于接收导入。
 - Revit、panel sidecar 与任何 MCP server 必须以同一个 Windows user 运行。
 
-宿主项目以 `net8.0-windows`、`x64` 为目标，并在 build 时选择
-`Autodesk.Revit.SDK` package 版本 `$(RevitYear).0.0.9999`（默认 `2026`）。用
-`/p:RevitYear=2025` 或 `/p:RevitYear=2026` 覆盖。仓库没有记录该
-package 的已验证 hash 或 provenance receipt。生产 build 应验证该 dependency，或
-改用受控的 Revit 安装/SDK 引用。
+宿主项目以 `net8.0-windows`、`x64` 为目标，并把 build 年份映射到精确的
+`Autodesk.Revit.SDK` package：Revit 2025 使用 `2025.0.2.419`，Revit 2026
+使用 `2026.0.0.9999`（默认）。这些 pin 对应 NuGet 官方目录中的
+[2025](https://www.nuget.org/packages/Autodesk.Revit.SDK/2025.0.2.419) 与
+[2026](https://www.nuget.org/packages/Autodesk.Revit.SDK/2026.0.0.9999) 条目。
+用 `/p:RevitYear=2025` 或 `/p:RevitYear=2026` 覆盖；其他年份会 fail closed。
+源码还 pin 了每个 package 在 NuGet 官方目录中的 SHA-512。build 会在解析引用前，
+把 NuGet cache 的 `.sha512` receipt 和实际 `.nupkg` 字节都与该 pin 比较。这是
+dependency content provenance，不是 add-in 已在真实 Revit 中加载或正确运行的证据；
+生产 build 仍应使用受控 feed/cache，并保留 restore/build receipt。
 
 ## 构建
 
@@ -572,7 +579,7 @@ appearance asset，有效 MTL color 仍会应用，但 bitmap 不会绑定。
   放置第一个可用 symbol 前不再验证其 content 或 provenance。
 - 没有 one-call paid workflow、安装器、签名或自动更新。
 - Production HTTP connections 有意不使用 system proxies。
-- 尚未完成任何 Revit 年份的真实冒烟收据（2026 为 Supported 目标且 runtime 验收仍开放；2025 仅 compile-only）。
+- 2025 与 2026 均未完成真实 Revit 冒烟收据；两者都仅为 Best-effort 编译/打包目标。
 - Revit 2024 及更早（.NET Framework / `net48`）为 Unsupported，需单独 host 里程碑后才可能支持。
 
 详细信任与验收边界见 [Architecture](./docs/ARCHITECTURE.md)、

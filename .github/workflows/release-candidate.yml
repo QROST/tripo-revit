@@ -18,7 +18,7 @@ on:
         default: true
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-candidate
@@ -26,17 +26,32 @@ concurrency:
 
 jobs:
   candidate:
+    permissions:
+      contents: read
     runs-on: windows-latest
     timeout-minutes: 30
+    outputs:
+      artifact_name: ${{ steps.version.outputs.artifact_name }}
+      expected_event_commit: ${{ steps.version.outputs.expected_event_commit }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      release_tag: ${{ steps.version.outputs.tag }}
+      source_commit: ${{ steps.identity.outputs.source_commit }}
+      tag_ref_sha: ${{ steps.identity.outputs.tag_ref_sha }}
     steps:
       - name: Resolve version
         id: version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PUSH_REF_NAME: ${{ github.ref_name }}
+          REQUESTED_PRERELEASE: ${{ inputs.prerelease }}
         shell: pwsh
         run: |
-          $requested = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            "${{ inputs.version }}".Trim()
+          $requested = if ($env:EVENT_NAME -eq "workflow_dispatch") {
+            $env:DISPATCH_VERSION.Trim()
           } else {
-            "${{ github.ref_name }}".Trim()
+            $env:PUSH_REF_NAME.Trim()
           }
           if (-not $requested) { throw "Version is empty." }
           if (-not $requested.StartsWith("v", [StringComparison]::OrdinalIgnoreCase)) {
@@ -45,8 +60,21 @@ jobs:
           if ($requested -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
             throw "Version '$requested' is not a canonical release tag."
           }
+          $expectedEventCommit = if ($env:EVENT_NAME -eq "push") {
+            $env:EVENT_SHA.Trim()
+          } else {
+            ""
+          }
+          $isPrerelease = if ($env:EVENT_NAME -eq "workflow_dispatch") {
+            [System.Convert]::ToBoolean($env:REQUESTED_PRERELEASE)
+          } else {
+            $true
+          }
+          "artifact_name=tripo-revit-$requested" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "tag=$requested" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "ref=refs/tags/$requested" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "expected_event_commit=$expectedEventCommit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "is_prerelease=$($isPrerelease.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Output "Using version tag $requested"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -54,22 +82,54 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Verify immutable release identity
+        id: identity
         env:
+          EXPECTED_EVENT_COMMIT: ${{ steps.version.outputs.expected_event_commit }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
         shell: pwsh
         run: |
-          $tag = "${{ steps.version.outputs.tag }}"
-          git show-ref --verify --quiet "refs/tags/$tag"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Requested tag '$tag' does not exist. Create and review the tag before running this workflow."
+          $ErrorActionPreference = "Stop"
+          $tag = $env:RELEASE_TAG.Trim()
+          $repository = $env:REPOSITORY.Trim()
+          $expectedEventCommit = $env:EXPECTED_EVENT_COMMIT.Trim()
+          if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Tag '$tag' is not canonical."
+          }
+          if ($repository -cnotmatch '^[0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+$') {
+            throw "Repository '$repository' is not canonical."
+          }
+          if ($expectedEventCommit -and
+              $expectedEventCommit -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') {
+            throw "The triggering event commit is not a canonical Git object ID."
           }
 
-          $tagCommit = (git rev-list -n 1 "$tag^{commit}").Trim()
-          $headCommit = (git rev-parse HEAD).Trim()
+          function Invoke-GitText {
+            param([Parameter(Mandatory = $true)][string[]] $Arguments)
+            $lines = & git @Arguments
+            if ($LASTEXITCODE -ne 0) {
+              throw "git $($Arguments[0]) failed while verifying release identity."
+            }
+            return (($lines | Out-String).Trim())
+          }
+
+          & git show-ref --verify --quiet "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Requested tag '$tag' does not exist in the checkout."
+          }
+          $tagCommit = Invoke-GitText @("rev-list", "-n", "1", "$tag^{commit}")
+          $tagRefSha = Invoke-GitText @("rev-parse", "refs/tags/$tag")
+          $headCommit = Invoke-GitText @("rev-parse", "HEAD")
           if ($tagCommit -cne $headCommit) {
             throw "Checked-out commit '$headCommit' does not match tag '$tag' commit '$tagCommit'."
           }
-
+          if ($expectedEventCommit) {
+            $eventCommit = Invoke-GitText @("rev-parse", "${expectedEventCommit}^{commit}")
+            if ($eventCommit -cne $headCommit) {
+              throw "Tag-push event commit '$eventCommit' does not match checked-out commit '$headCommit'."
+            }
+          }
           $declaredVersion = (Get-Content -LiteralPath VERSION -Raw).Trim()
           if ($tag -cne "v$declaredVersion") {
             throw "Tag '$tag' does not match VERSION '$declaredVersion'."
@@ -80,55 +140,223 @@ jobs:
             Authorization = "Bearer $env:GH_TOKEN"
             "X-GitHub-Api-Version" = "2022-11-28"
           }
-          $release = Invoke-WebRequest `
-            -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" `
-            -Headers $headers `
-            -Method Get `
-            -SkipHttpErrorCheck
-          if ([int]$release.StatusCode -eq 200) {
+          $encodedTag = [Uri]::EscapeDataString($tag)
+          $remoteRefResponse = Invoke-WebRequest `
+            -Uri "https://api.github.com/repos/$repository/git/ref/tags/$encodedTag" `
+            -Headers $headers -Method Get -SkipHttpErrorCheck
+          if ([int]$remoteRefResponse.StatusCode -ne 200) {
+            throw "Could not resolve remote tag ref '$tag' (HTTP $([int]$remoteRefResponse.StatusCode))."
+          }
+          $remoteTagRefSha = ($remoteRefResponse.Content | ConvertFrom-Json).object.sha
+          if ($remoteTagRefSha -cne $tagRefSha) {
+            throw "Remote tag ref '$tag' does not match checked-out ref object '$tagRefSha'."
+          }
+          $remoteObject = ($remoteRefResponse.Content | ConvertFrom-Json).object
+          $peelDepth = 0
+          while ($remoteObject.type -ceq "tag") {
+            if ($peelDepth -ge 8) {
+              throw "Remote tag '$tag' exceeds the bounded annotated-tag depth."
+            }
+            $peelDepth++
+            $tagObjectResponse = Invoke-WebRequest `
+              -Uri "https://api.github.com/repos/$repository/git/tags/$($remoteObject.sha)" `
+              -Headers $headers -Method Get -SkipHttpErrorCheck
+            if ([int]$tagObjectResponse.StatusCode -ne 200) {
+              throw "Could not peel remote tag '$tag' (HTTP $([int]$tagObjectResponse.StatusCode))."
+            }
+            $remoteObject = ($tagObjectResponse.Content | ConvertFrom-Json).object
+          }
+          if ($remoteObject.type -cne "commit" -or
+              $remoteObject.sha -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') {
+            throw "Remote tag '$tag' does not peel to a canonical commit."
+          }
+          $remoteCommit = $remoteObject.sha
+          if ($remoteCommit -cne $headCommit) {
+            throw "Remote tag '$tag' does not resolve to checked-out commit '$headCommit'."
+          }
+          $releaseResponse = Invoke-WebRequest `
+            -Uri "https://api.github.com/repos/$repository/releases/tags/$encodedTag" `
+            -Headers $headers -Method Get -SkipHttpErrorCheck
+          if ([int]$releaseResponse.StatusCode -eq 200) {
             throw "Release '$tag' already exists. Existing releases and assets are immutable."
           }
-          if ([int]$release.StatusCode -ne 404) {
-            throw "Could not prove that release '$tag' is absent (HTTP $([int]$release.StatusCode))."
+          if ([int]$releaseResponse.StatusCode -ne 404) {
+            throw "Could not prove that release '$tag' is absent (HTTP $([int]$releaseResponse.StatusCode))."
           }
+          "source_commit=$headCommit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag_ref_sha=$tagRefSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 8.0.x
-      - name: Restore
-        run: dotnet restore Tripo.Revit.sln /p:RevitYear=2026
+      - name: Restore Revit 2025 host
+        run: dotnet restore src/Tripo.Revit/Tripo.Revit.csproj /p:RevitYear=2025
       - name: Build Revit 2025 host (compile gate)
-        run: dotnet build src/Tripo.Revit/Tripo.Revit.csproj --configuration Release /p:RevitYear=2025
+        run: dotnet build src/Tripo.Revit/Tripo.Revit.csproj --configuration Release --no-restore /p:RevitYear=2025
+      - name: Restore full solution (Revit 2026 host)
+        run: dotnet restore Tripo.Revit.sln /p:RevitYear=2026
       - name: Build full solution (Revit 2026 host)
         run: dotnet build Tripo.Revit.sln --configuration Release --no-restore /p:RevitYear=2026
       - name: Test
-        run: dotnet test Tripo.Revit.sln --configuration Release --no-build
+        run: dotnet test Tripo.Revit.sln --configuration Release --no-build --no-restore /p:RevitYear=2026
       - name: Assemble candidate
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         shell: pwsh
-        run: ./packaging/New-ReleaseCandidate.ps1 -Version "${{ steps.version.outputs.tag }}"
+        run: ./packaging/New-ReleaseCandidate.ps1 -Version $env:RELEASE_TAG
+      - name: Record candidate identity
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.identity.outputs.source_commit }}
+          TAG_REF_SHA: ${{ steps.identity.outputs.tag_ref_sha }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zips = @(Get-ChildItem -LiteralPath artifacts -File -Filter "*.zip")
+          $checksums = @(Get-ChildItem -LiteralPath artifacts -File -Filter "*.sha256")
+          if ($zips.Count -ne 1 -or $checksums.Count -ne 1) {
+            throw "Expected exactly one ZIP and one SHA-256 sidecar under artifacts/."
+          }
+          $zip = $zips[0]
+          $checksum = $checksums[0]
+          $actualHash = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumLine = (Get-Content -LiteralPath $checksum.FullName -Raw).Trim()
+          if ($checksumLine -cnotmatch '^([0-9a-f]{64})  ([^\\/]+\.zip)$' -or
+              $Matches[1] -cne $actualHash -or
+              $Matches[2] -cne $zip.Name) {
+            throw "The candidate SHA-256 sidecar does not match the assembled ZIP."
+          }
+          $manifestPath = "$($zip.FullName).manifest.json"
+          [ordered]@{
+            schemaVersion = 1
+            tag = $env:RELEASE_TAG
+            sourceCommit = $env:SOURCE_COMMIT
+            tagRefSha = $env:TAG_REF_SHA
+            archive = $zip.Name
+            sha256 = $actualHash
+          } | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
       - name: Upload candidate artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: tripo-revit-${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.artifact_name }}
           path: |
             artifacts/*.zip
             artifacts/*.sha256
+            artifacts/*.manifest.json
           if-no-files-found: error
           retention-days: 14
-      - name: Publish GitHub Pre-release
+
+  publish:
+    needs: candidate
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download verified candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.candidate.outputs.artifact_name }}
+          path: artifacts
+      - name: Reverify identity and publish new release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          IS_PRERELEASE: ${{ needs.candidate.outputs.is_prerelease }}
+          RELEASE_TAG: ${{ needs.candidate.outputs.release_tag }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ needs.candidate.outputs.source_commit }}
+          TAG_REF_SHA: ${{ needs.candidate.outputs.tag_ref_sha }}
         shell: pwsh
         run: |
-          $tag = "${{ steps.version.outputs.tag }}"
-          $isPrerelease = $true
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $isPrerelease = [System.Convert]::ToBoolean("${{ inputs.prerelease }}")
+          $ErrorActionPreference = "Stop"
+          $tag = $env:RELEASE_TAG
+          $repository = $env:REPOSITORY
+          $sourceCommit = $env:SOURCE_COMMIT
+          $tagRefSha = $env:TAG_REF_SHA
+          if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$' -or
+              $repository -cnotmatch '^[0-9A-Za-z_.-]+/[0-9A-Za-z_.-]+$' -or
+              $sourceCommit -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$' -or
+              $tagRefSha -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') {
+            throw "Candidate identity outputs are not canonical."
+          }
+          if ($env:IS_PRERELEASE -cnotin @("true", "false")) {
+            throw "Candidate pre-release output is not canonical."
+          }
+          $isPrerelease = $env:IS_PRERELEASE -ceq "true"
+
+          $zips = @(Get-ChildItem -LiteralPath artifacts -File -Filter "*.zip")
+          $checksums = @(Get-ChildItem -LiteralPath artifacts -File -Filter "*.sha256")
+          $manifests = @(Get-ChildItem -LiteralPath artifacts -File -Filter "*.manifest.json")
+          if ($zips.Count -ne 1 -or $checksums.Count -ne 1 -or $manifests.Count -ne 1) {
+            throw "Expected exactly one ZIP, checksum, and identity manifest."
+          }
+          $zip = $zips[0]
+          $sha = $checksums[0]
+          $manifestFile = $manifests[0]
+          $actualHash = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumLine = (Get-Content -LiteralPath $sha.FullName -Raw).Trim()
+          if ($checksumLine -cnotmatch '^([0-9a-f]{64})  ([^\\/]+\.zip)$' -or
+              $Matches[1] -cne $actualHash -or
+              $Matches[2] -cne $zip.Name) {
+            throw "Downloaded candidate checksum does not match its ZIP."
+          }
+          $manifest = Get-Content -LiteralPath $manifestFile.FullName -Raw | ConvertFrom-Json
+          if ($manifest.schemaVersion -ne 1 -or
+              $manifest.tag -cne $tag -or
+              $manifest.sourceCommit -cne $sourceCommit -or
+              $manifest.tagRefSha -cne $tagRefSha -or
+              $manifest.archive -cne $zip.Name -or
+              $manifest.sha256 -cne $actualHash) {
+            throw "Downloaded candidate manifest does not match the trusted job outputs or assets."
           }
 
-          $zip = Get-ChildItem -LiteralPath artifacts -Filter "*.zip" | Select-Object -First 1
-          $sha = Get-ChildItem -LiteralPath artifacts -Filter "*.sha256" | Select-Object -First 1
-          if (-not $zip -or -not $sha) {
-            throw "Release assets missing under artifacts/."
+          $headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:GH_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $encodedTag = [Uri]::EscapeDataString($tag)
+          $remoteRefResponse = Invoke-WebRequest `
+            -Uri "https://api.github.com/repos/$repository/git/ref/tags/$encodedTag" `
+            -Headers $headers -Method Get -SkipHttpErrorCheck
+          if ([int]$remoteRefResponse.StatusCode -ne 200) {
+            throw "Could not resolve remote tag ref '$tag' (HTTP $([int]$remoteRefResponse.StatusCode))."
+          }
+          $remoteTagRefSha = ($remoteRefResponse.Content | ConvertFrom-Json).object.sha
+          if ($remoteTagRefSha -cne $tagRefSha) {
+            throw "Remote tag ref '$tag' moved after candidate verification."
+          }
+          $remoteObject = ($remoteRefResponse.Content | ConvertFrom-Json).object
+          $peelDepth = 0
+          while ($remoteObject.type -ceq "tag") {
+            if ($peelDepth -ge 8) {
+              throw "Remote tag '$tag' exceeds the bounded annotated-tag depth."
+            }
+            $peelDepth++
+            $tagObjectResponse = Invoke-WebRequest `
+              -Uri "https://api.github.com/repos/$repository/git/tags/$($remoteObject.sha)" `
+              -Headers $headers -Method Get -SkipHttpErrorCheck
+            if ([int]$tagObjectResponse.StatusCode -ne 200) {
+              throw "Could not peel remote tag '$tag' (HTTP $([int]$tagObjectResponse.StatusCode))."
+            }
+            $remoteObject = ($tagObjectResponse.Content | ConvertFrom-Json).object
+          }
+          if ($remoteObject.type -cne "commit" -or
+              $remoteObject.sha -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') {
+            throw "Remote tag '$tag' does not peel to a canonical commit."
+          }
+          $remoteCommit = $remoteObject.sha
+          if ($remoteCommit -cne $sourceCommit) {
+            throw "Remote tag '$tag' moved after candidate verification."
+          }
+          $releaseResponse = Invoke-WebRequest `
+            -Uri "https://api.github.com/repos/$repository/releases/tags/$encodedTag" `
+            -Headers $headers -Method Get -SkipHttpErrorCheck
+          if ([int]$releaseResponse.StatusCode -eq 200) {
+            throw "Release '$tag' already exists. Existing releases and assets are immutable."
+          }
+          if ([int]$releaseResponse.StatusCode -ne 404) {
+            throw "Could not prove that release '$tag' is absent (HTTP $([int]$releaseResponse.StatusCode))."
           }
 
           $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
@@ -136,6 +364,8 @@ jobs:
           ## Experimental pre-release
 
           Tripo-Revit community adapter package for Autodesk Revit **2025** and **2026** (Windows x64, .NET 8).
+
+          Source commit: `__SOURCE_COMMIT__`
 
           This is **not** a production release. Binaries are **unsigned**. There is no installer or automatic update. Revit **2025** and **2026** are both Best-effort targets until exact-year real-host smoke receipts exist. Treat this as an experimental install for technical users.
 
@@ -149,6 +379,7 @@ jobs:
           - `mcp/` — optional standalone MCP server output
           - `README.md` / `README.zh-CN.md` — install and usage
           - matching `.sha256` checksum sidecar
+          - `.manifest.json` — source commit and archive identity receipt
 
           ### Install (summary)
           Close Revit, then copy the matching `Addins/YYYY` contents into `%APPDATA%\Autodesk\Revit\Addins\YYYY\` as documented in the README. Verify the SHA-256 sidecar before installing.
@@ -157,17 +388,19 @@ jobs:
 
           ## 中文摘要
           实验性预发布包：Windows x64 + Revit 2025/2026（.NET 8）；未签名；无安装器；需自备 Tripo API key。2025 与 2026 在分别取得真实宿主冒烟收据前都仅为 Best-effort。请按 README 将对应 `Addins/YYYY` 拷入 `%APPDATA%\Autodesk\Revit\Addins\YYYY\`，并先校验 `.sha256`。
-          '@.Replace("          ", "") | Set-Content -LiteralPath $notesPath -Encoding utf8
+          '@.Replace("          ", "").Replace("__SOURCE_COMMIT__", $sourceCommit) |
+            Set-Content -LiteralPath $notesPath -Encoding utf8
 
           $args = @(
             "release", "create", $tag,
-            $zip.FullName, $sha.FullName,
+            $zip.FullName, $sha.FullName, $manifestFile.FullName,
             "--verify-tag",
+            "--repo", $repository,
             "--title", "Tripo-Revit $tag (experimental)",
             "--notes-file", $notesPath
           )
           if ($isPrerelease) { $args += "--prerelease" }
           & gh @args
           if ($LASTEXITCODE -ne 0) {
-            throw "Creating release '$tag' failed. No existing release or asset was changed."
+            throw "Creating release '$tag' failed; inspect GitHub for a partial draft before retrying."
           }

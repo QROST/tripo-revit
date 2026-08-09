@@ -11,7 +11,9 @@
          exact package versions in sync with Autodesk's NuGet catalog. -->
     <RevitYear Condition="'$(RevitYear)' == ''">2026</RevitYear>
     <RevitSdkVersion Condition="'$(RevitYear)' == '2025'">2025.0.2.419</RevitSdkVersion>
+    <RevitSdkExpectedSha512 Condition="'$(RevitYear)' == '2025'">lRRJmyfUxPHXCTgY5u1p3s0elGfKLtaHe/m4q/lfr4RfiOJwHQRxvU2wb8O638GMX/Xdk309x1tGHvSsQH1otw==</RevitSdkExpectedSha512>
     <RevitSdkVersion Condition="'$(RevitYear)' == '2026'">2026.0.0.9999</RevitSdkVersion>
+    <RevitSdkExpectedSha512 Condition="'$(RevitYear)' == '2026'">3ybbMe0lz0mcvDbLikwvhAToZvd68Ju1NpsQ8BYbleench4P6jft0G8ngaxK3KO4sZIu5NlLZSUOHkQj/9WLpg==</RevitSdkExpectedSha512>
     <!-- The paths below already contain the target framework. Without this
          opt-out, the SDK appends it a second time after project evaluation. -->
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -33,8 +35,48 @@
     Name="ValidateRevitSdkSelection"
     BeforeTargets="CollectPackageReferences;PrepareForBuild">
     <Error
-      Condition="'$(RevitSdkVersion)' == ''"
+      Condition="'$(RevitSdkVersion)' == '' or '$(RevitSdkExpectedSha512)' == ''"
       Text="Unsupported RevitYear '$(RevitYear)'. Supported compile targets are 2025 and 2026." />
+  </Target>
+  <Target
+    Name="VerifyRevitSdkPackageHash"
+    BeforeTargets="ResolveReferences"
+    DependsOnTargets="ValidateRevitSdkSelection">
+    <PropertyGroup>
+      <_RevitSdkPackageName>autodesk.revit.sdk.$(RevitSdkVersion).nupkg</_RevitSdkPackageName>
+      <_RevitSdkPackagePath>$(PkgAutodesk_Revit_SDK)/$(_RevitSdkPackageName)</_RevitSdkPackagePath>
+      <_RevitSdkHashPath>$(_RevitSdkPackagePath).sha512</_RevitSdkHashPath>
+    </PropertyGroup>
+    <Error
+      Condition="!Exists('$(_RevitSdkPackagePath)')"
+      Text="Pinned Autodesk.Revit.SDK package is missing: $(_RevitSdkPackagePath). Run restore for Revit $(RevitYear)." />
+    <Error
+      Condition="!Exists('$(_RevitSdkHashPath)')"
+      Text="Pinned Autodesk.Revit.SDK hash receipt is missing: $(_RevitSdkHashPath)." />
+    <ReadLinesFromFile File="$(_RevitSdkHashPath)">
+      <Output TaskParameter="Lines" ItemName="_RevitSdkHashReceiptLines" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <_RevitSdkHashReceipt>@(_RevitSdkHashReceiptLines)</_RevitSdkHashReceipt>
+    </PropertyGroup>
+    <Error
+      Condition="'$(_RevitSdkHashReceipt)' != '$(RevitSdkExpectedSha512)'"
+      Text="Autodesk.Revit.SDK $(RevitSdkVersion) NuGet hash receipt does not match the source-pinned SHA-512." />
+    <ItemGroup>
+      <_RevitSdkPackage Include="$(_RevitSdkPackagePath)" />
+    </ItemGroup>
+    <GetFileHash
+      Files="@(_RevitSdkPackage)"
+      Algorithm="SHA512"
+      HashEncoding="base64">
+      <Output TaskParameter="Items" ItemName="_RevitSdkHashedPackage" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_RevitSdkActualSha512>@(_RevitSdkHashedPackage->'%(FileHash)')</_RevitSdkActualSha512>
+    </PropertyGroup>
+    <Error
+      Condition="'$(_RevitSdkActualSha512)' != '$(RevitSdkExpectedSha512)'"
+      Text="Autodesk.Revit.SDK $(RevitSdkVersion) package content does not match the source-pinned SHA-512." />
   </Target>
   <ItemGroup>
     <Reference Include="RevitAPI">

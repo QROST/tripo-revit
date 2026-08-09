@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag/version (must match VERSION, e.g. v0.1.0)"
+        description: "Existing release tag (must match VERSION, e.g. v0.1.1)"
         required: true
         type: string
-        default: "v0.1.0"
+        default: "v0.1.1"
       prerelease:
         description: "Mark the GitHub Release as a pre-release"
         required: true
@@ -20,15 +20,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-candidate
+  cancel-in-progress: false
+
 jobs:
   candidate:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: 8.0.x
       - name: Resolve version
         id: version
         shell: pwsh
@@ -42,8 +42,58 @@ jobs:
           if (-not $requested.StartsWith("v", [StringComparison]::OrdinalIgnoreCase)) {
             $requested = "v$requested"
           }
+          if ($requested -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Version '$requested' is not a canonical release tag."
+          }
           "tag=$requested" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "ref=refs/tags/$requested" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Output "Using version tag $requested"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.version.outputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          git show-ref --verify --quiet "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Requested tag '$tag' does not exist. Create and review the tag before running this workflow."
+          }
+
+          $tagCommit = (git rev-list -n 1 "$tag^{commit}").Trim()
+          $headCommit = (git rev-parse HEAD).Trim()
+          if ($tagCommit -cne $headCommit) {
+            throw "Checked-out commit '$headCommit' does not match tag '$tag' commit '$tagCommit'."
+          }
+
+          $declaredVersion = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          if ($tag -cne "v$declaredVersion") {
+            throw "Tag '$tag' does not match VERSION '$declaredVersion'."
+          }
+
+          $headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:GH_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $release = Invoke-WebRequest `
+            -Uri "https://api.github.com/repos/${{ github.repository }}/releases/tags/$tag" `
+            -Headers $headers `
+            -Method Get `
+            -SkipHttpErrorCheck
+          if ([int]$release.StatusCode -eq 200) {
+            throw "Release '$tag' already exists. Existing releases and assets are immutable."
+          }
+          if ([int]$release.StatusCode -ne 404) {
+            throw "Could not prove that release '$tag' is absent (HTTP $([int]$release.StatusCode))."
+          }
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.0.x
       - name: Restore
         run: dotnet restore Tripo.Revit.sln /p:RevitYear=2026
       - name: Build Revit 2025 host (compile gate)
@@ -87,7 +137,7 @@ jobs:
 
           Tripo-Revit community adapter package for Autodesk Revit **2025** and **2026** (Windows x64, .NET 8).
 
-          This is **not** a production release. Binaries are **unsigned**. There is no installer or automatic update. Revit **2026** is the Supported target; real Revit 2026 runtime acceptance remains an open gate. Revit **2025** is compile-only (Best-effort) until a Revit 2025 smoke receipt exists. Treat this as an experimental install for technical users.
+          This is **not** a production release. Binaries are **unsigned**. There is no installer or automatic update. Revit **2025** and **2026** are both Best-effort targets until exact-year real-host smoke receipts exist. Treat this as an experimental install for technical users.
 
           ### Requirements
           - Windows x64 + Autodesk Revit 2025 or 2026 (install only the matching `Addins/YYYY` tree)
@@ -106,24 +156,18 @@ jobs:
           Not affiliated with or endorsed by Tripo or Autodesk. Licensed under Apache-2.0.
 
           ## 中文摘要
-          实验性预发布包：Windows x64 + Revit 2025/2026（.NET 8）；未签名；无安装器；需自备 Tripo API key。2026 为 Supported 目标，正式 Revit 2026 runtime 验收仍开放；2025 仅为 compile-only（Best-effort），尚无 2025 冒烟收据。请按 README 将对应 `Addins/YYYY` 拷入 `%APPDATA%\Autodesk\Revit\Addins\YYYY\`，并先校验 `.sha256`。
+          实验性预发布包：Windows x64 + Revit 2025/2026（.NET 8）；未签名；无安装器；需自备 Tripo API key。2025 与 2026 在分别取得真实宿主冒烟收据前都仅为 Best-effort。请按 README 将对应 `Addins/YYYY` 拷入 `%APPDATA%\Autodesk\Revit\Addins\YYYY\`，并先校验 `.sha256`。
           '@.Replace("          ", "") | Set-Content -LiteralPath $notesPath -Encoding utf8
 
-          gh release view $tag 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $zip.FullName $sha.FullName --clobber
-            if ($isPrerelease) {
-              gh release edit $tag --prerelease --notes-file $notesPath
-            } else {
-              gh release edit $tag --latest --notes-file $notesPath
-            }
-          } else {
-            $args = @(
-              "release", "create", $tag,
-              $zip.FullName, $sha.FullName,
-              "--title", "Tripo-Revit $tag (experimental)",
-              "--notes-file", $notesPath
-            )
-            if ($isPrerelease) { $args += "--prerelease" }
-            & gh @args
+          $args = @(
+            "release", "create", $tag,
+            $zip.FullName, $sha.FullName,
+            "--verify-tag",
+            "--title", "Tripo-Revit $tag (experimental)",
+            "--notes-file", $notesPath
+          )
+          if ($isPrerelease) { $args += "--prerelease" }
+          & gh @args
+          if ($LASTEXITCODE -ne 0) {
+            throw "Creating release '$tag' failed. No existing release or asset was changed."
           }

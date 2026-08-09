@@ -809,7 +809,7 @@ public sealed partial class TripoV3Client : ITripoApiClient
         string apiKey = paidOperationApiKey ?? GetValidatedApiKey();
         HttpRequestMessage request = new(method, relativePath);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        request.Headers.UserAgent.ParseAdd("tripo-revit/0.1.0");
+        request.Headers.UserAgent.ParseAdd("tripo-revit/0.1.1");
         return request;
     }
 

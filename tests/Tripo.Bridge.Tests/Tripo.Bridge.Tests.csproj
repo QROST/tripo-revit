@@ -16,5 +16,9 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Tripo.Bridge/Tripo.Bridge.csproj" />
+    <!-- Exercise host coordination logic against explicit API doubles. This is
+         portable algorithm coverage, not Revit SDK or runtime acceptance. -->
+    <Compile Include="../../src/Tripo.Revit/RevitDocumentSessions.cs" Link="HostLogic/RevitDocumentSessions.cs" />
+    <Compile Include="../../src/Tripo.Revit/RevitExternalEventPump.cs" Link="HostLogic/RevitExternalEventPump.cs" />
   </ItemGroup>
 </Project>

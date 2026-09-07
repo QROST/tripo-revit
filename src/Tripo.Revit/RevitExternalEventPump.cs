@@ -37,7 +37,7 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
         ArgumentNullException.ThrowIfNull(operation);
         cancellationToken.ThrowIfCancellationRequested();
 
-        WorkItem<T> item = new(operation, cancellationToken);
+        WorkItem<T> item;
         bool shouldRaise;
         lock (_gate)
         {
@@ -47,6 +47,22 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
                 throw new InvalidOperationException("The Revit external event is not attached.");
             }
 
+            // Revit may stay in a modal command after a bridge caller times out.
+            // Canceled work must not occupy the bounded admission slots forever.
+            int queuedCount = _queue.Count;
+            for (int index = 0; index < queuedCount; index++)
+            {
+                IWorkItem queued = _queue.Dequeue();
+                if (!queued.IsCompleted)
+                {
+                    _queue.Enqueue(queued);
+                }
+                else
+                {
+                    queued.Dispose();
+                }
+            }
+
             if (_queue.Count >= MaximumQueuedRequests)
             {
                 throw new Tripo.Bridge.BridgeCallException(
@@ -54,6 +70,7 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
                     "The Revit API queue is full.");
             }
 
+            item = new WorkItem<T>(operation, cancellationToken);
             _queue.Enqueue(item);
             shouldRaise = !_raiseInProgress;
             if (shouldRaise)
@@ -179,6 +196,7 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
 
     private void ScheduleRaiseRetry()
     {
+        CancellationToken shutdownToken;
         lock (_gate)
         {
             if (_disposed || _retryScheduled)
@@ -187,16 +205,17 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
             }
 
             _retryScheduled = true;
+            shutdownToken = _shutdown.Token;
         }
 
-        _ = RetryRaiseAsync();
+        _ = RetryRaiseAsync(shutdownToken);
     }
 
-    private async Task RetryRaiseAsync()
+    private async Task RetryRaiseAsync(CancellationToken shutdownToken)
     {
         try
         {
-            await Task.Delay(RaiseRetryDelay, _shutdown.Token).ConfigureAwait(false);
+            await Task.Delay(RaiseRetryDelay, shutdownToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -238,8 +257,10 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
         }
     }
 
-    private interface IWorkItem
+    private interface IWorkItem : IDisposable
     {
+        bool IsCompleted { get; }
+
         void Execute(UIApplication application);
 
         void Fail(Exception exception);
@@ -249,6 +270,10 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
     {
         private readonly Func<UIApplication, T> _operation;
         private readonly CancellationToken _cancellationToken;
+        private readonly CancellationTokenRegistration _cancellationRegistration;
+        // 0 = queued, 1 = executing, 2 = completed. A cancellation after the
+        // operation starts cannot turn a committed import into a canceled task.
+        private int _state;
         private readonly TaskCompletionSource<T> _completion = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -258,12 +283,25 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
         {
             _operation = operation;
             _cancellationToken = cancellationToken;
+            _cancellationRegistration = cancellationToken.Register(
+                static state => ((WorkItem<T>)state!).CancelWhileQueued(),
+                this);
         }
 
         public Task<T> Task => _completion.Task;
 
+        public bool IsCompleted => _completion.Task.IsCompleted;
+
+        public void Dispose() => _cancellationRegistration.Dispose();
+
         public void Execute(UIApplication application)
         {
+            if (Interlocked.CompareExchange(ref _state, 1, 0) != 0)
+            {
+                _cancellationRegistration.Dispose();
+                return;
+            }
+
             try
             {
                 _cancellationToken.ThrowIfCancellationRequested();
@@ -278,9 +316,29 @@ internal sealed class RevitExternalEventPump : IExternalEventHandler, IDisposabl
             {
                 _completion.TrySetException(exception);
             }
+            finally
+            {
+                Interlocked.Exchange(ref _state, 2);
+                _cancellationRegistration.Dispose();
+            }
         }
 
-        public void Fail(Exception exception) =>
-            _completion.TrySetException(exception);
+        public void Fail(Exception exception)
+        {
+            if (Interlocked.CompareExchange(ref _state, 2, 0) == 0)
+            {
+                _completion.TrySetException(exception);
+            }
+
+            _cancellationRegistration.Dispose();
+        }
+
+        private void CancelWhileQueued()
+        {
+            if (Interlocked.CompareExchange(ref _state, 2, 0) == 0)
+            {
+                _completion.TrySetCanceled(_cancellationToken);
+            }
+        }
     }
 }

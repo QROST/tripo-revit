@@ -22,6 +22,9 @@ jobs:
         run: dotnet build Tripo.Revit.Portable.slnf --configuration Release --no-restore /p:SkipRevitHostBuild=true
       - name: Test portable macOS subset
         run: dotnet test Tripo.Revit.Portable.slnf --configuration Release --no-build /p:SkipRevitHostBuild=true
+      - name: Test release candidate assembly with synthetic files
+        shell: pwsh
+        run: ./packaging/Test-ReleaseCandidate.ps1
 
   windows-full-gate:
     runs-on: windows-latest
@@ -39,6 +42,9 @@ jobs:
         env:
           TRIPO_RUN_WINDOWS_CREDENTIAL_MANAGER_CANARY: "1"
         run: dotnet test Tripo.Revit.sln --configuration Release --no-build
+      - name: Test release candidate assembly with synthetic files
+        shell: pwsh
+        run: ./packaging/Test-ReleaseCandidate.ps1
 
   windows-host-matrix:
     strategy:

@@ -6,8 +6,10 @@ namespace Tripo.Mcp.Tests;
 
 public sealed class ReleaseWorkflowPolicyTests
 {
-    [Fact]
-    public void CandidateWorkflowUsesAnImmutableExistingTagAndNeverOverwrites()
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void CandidateWorkflowUsesAnImmutableExistingTagAndNeverOverwrites(string checkoutLineEnding)
     {
         string root = FindRepositoryRoot();
         string workflow = File.ReadAllText(
@@ -15,7 +17,10 @@ public sealed class ReleaseWorkflowPolicyTests
                 root,
                 ".github",
                 "workflows",
-                "release-candidate.yml"));
+                "release-candidate.yml"))
+            .ReplaceLineEndings(checkoutLineEnding);
+        // The policy concerns YAML content, independent of Git's checkout EOL.
+        workflow = workflow.ReplaceLineEndings("\n");
         string identityPolicy = File.ReadAllText(
             Path.Combine(
                 root,

@@ -5,6 +5,20 @@ per-user Revit `Addins/YYYY` layout (default years: 2025 and 2026) and includes
 a separate optional MCP directory. It refuses a version that differs from the
 root `VERSION` file and emits a ZIP plus a SHA-256 sidecar under `artifacts/`.
 
+Existing candidate directories, ZIPs, and checksums are never overwritten.
+Assembly runs in a unique temporary directory, under an exclusive per-version
+lock, and publishes the completed ZIP last. A handled failure removes only this
+invocation's outputs. A process crash can leave a `.candidate-*` directory, a
+`.lock`, or partial final outputs; inspect and preserve that evidence, confirm
+the builder has stopped, then move it aside before retrying. Do not remove an
+active builder's lock. Packages include the repository `LICENSE` and `NOTICE`.
+
+Run `pwsh -NoProfile -File ./packaging/Test-ReleaseCandidate.ps1` for isolated,
+synthetic-file coverage of layout/checksum, existing-output preservation, lock
+refusal, compression failure, late output collisions, retry cleanup, and host
+year selection. CI runs it on macOS and Windows. These tests do not load Revit
+or publish anything.
+
 ```powershell
 dotnet restore src/Tripo.Revit/Tripo.Revit.csproj /p:RevitYear=2025
 dotnet build src/Tripo.Revit/Tripo.Revit.csproj --configuration Release --no-restore /p:RevitYear=2025
@@ -17,6 +31,7 @@ dotnet test Tripo.Revit.sln --configuration Release --no-build --no-restore /p:R
 Host build outputs land under
 `src/Tripo.Revit/bin/Release/net8.0-windows/<RevitYear>/`. Override packaged
 years with `-RevitYears 2026` when needed.
+Empty, duplicate, and unsupported host-year lists are rejected before assembly.
 
 The `release-candidate` workflow accepts only an existing canonical tag whose
 commit is checked out and whose version matches `VERSION`. The read-only build

@@ -68,6 +68,13 @@ The automated suite covers:
 
 - authenticated, bounded bridge and host-control transports;
 - exact host PID and document-session binding;
+- linked Revit coordination sources tested with explicit API doubles: copied
+  documents have separate sessions, wrappers of one open document share a
+  session, canceled/failed closes preserve it, and successful closes retire it
+  without reading the closed document; canceled ExternalEvent requests finish
+  while Revit is busy and release queue capacity, while already-started work
+  keeps its actual result. These doubles exercise the coordination algorithm;
+  they do not run Autodesk code or establish host acceptance;
 - credential precedence and redaction, macOS/Windows native-store selection
   without file fallback, and an opt-in isolated Windows native
   write/read/delete canary;
@@ -154,6 +161,12 @@ deployment.
    `.rfa`.
 3. Verify all document work runs through `ExternalEvent`, the window remains
    responsive, and document switches fail closed.
+   Open two file copies with the same creation identity and switch between
+   them before import: the old session must be refused. Close one copy and
+   confirm the other's session stays stable; cancel a close and confirm its
+   existing session remains usable. Keep Revit in a modal command past a
+   bridge request timeout, then confirm expired requests do not block new
+   queue admission and never mutate the model when Revit becomes available.
 4. Run text, local PNG/JPEG/WebP, and public-HTTPS image generation; verify the
    local in-memory preview, its confirmation SHA/length, replacement-file
    refusal before paid dispatch, oversized-dimension preview refusal, URL

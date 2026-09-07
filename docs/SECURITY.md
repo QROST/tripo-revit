@@ -93,6 +93,11 @@ The lock and journal protect cooperating processes under one login. They do not 
   IPv4-compatible IPv6, and NAT64 destinations are rejected. URL length,
   redirect count, headers, body time, and body bytes are bounded. The URL is
   never written to a descriptor, paid journal, panel recovery hint, or receipt.
+  Native IPv6 downloads use an explicit `2000::/3` allow boundary, with scoped
+  addresses, protocol assignments (`2001::/23`), documentation ranges
+  (`2001:db8::/32`, `3fff::/20`), and 6to4 excluded. This intentionally treats
+  special-purpose services more conservatively than general routability;
+  IPv4-mapped addresses still pass the IPv4 policy.
 - The image-transfer root and UUID-derived file are checked for
   symlink/reparse-point substitution before use or deletion. Unix directories
   and files use `0700`/`0600`; a custom data root must be private.

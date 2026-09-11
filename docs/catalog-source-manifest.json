@@ -1,0 +1,379 @@
+{
+  "schema_version": 1,
+  "checked_on": "2026-09-08",
+  "timezone": "America/Los_Angeles",
+  "status": "official_source_research_with_initial_parser_receipts_not_host_acceptance",
+  "sources": [
+    {
+      "id": "hm-oe1-pdf",
+      "brand": "Herman Miller",
+      "title": "OE1 Workspace Collection brochure",
+      "url": "https://assets.hermanmiller.com/content/dam/hermanmiller/documents/product_literature/brochures/oe1_workspace_collection_brochure.pdf",
+      "format": "pdf",
+      "pages": 11,
+      "document_year": 2023,
+      "verification": "downloaded_text_extracted_and_sample_pages_rendered",
+      "byte_length": 3997182,
+      "sha256": "2415f22d097649fb179f2f54ba2de99e55eb9b797b570811c57083e3044200d2",
+      "sample_pages_1based": [
+        3,
+        10
+      ],
+      "purpose": "Cross-page association; 19 product tiles on page 10 are candidates, not 19 resolved SKUs; multi-object lifestyle images."
+    },
+    {
+      "id": "hm-oe1-web",
+      "brand": "Herman Miller",
+      "title": "OE1 Workspace Collection portfolio",
+      "url": "https://www.hermanmiller.com/products/portfolios/oe1-workspace-collection/",
+      "format": "html_collection",
+      "document_year": null,
+      "verification": "public_page_read",
+      "purpose": "Discover individual products and connect brochure to specs, images and resources."
+    },
+    {
+      "id": "hm-aeron-sheet",
+      "brand": "Herman Miller",
+      "title": "Aeron Chair product sheet",
+      "url": "https://www.hermanmiller.com/content/dam/hermanmiller/documents/product_literature/product_sheets/aeron_chairs_product_sheet.pdf",
+      "format": "pdf",
+      "pages": 2,
+      "document_year": 2026,
+      "verification": "downloaded_text_extracted_and_sample_pages_rendered",
+      "byte_length": 1331895,
+      "sha256": "7adcc6c3eb4b6217a894af9abea1558038cf8acf2c6b7e9eb5e83cf0add391f3",
+      "sample_pages_1based": [
+        2
+      ],
+      "purpose": "Associate diagrams with A/B/C work chairs and two stool variants; distinguish seat depth from overall depth and adjustable ranges."
+    },
+    {
+      "id": "hm-aeron-brochure",
+      "brand": "Herman Miller",
+      "title": "Aeron Chair brochure",
+      "url": "https://www.hermanmiller.com/content/dam/hermanmiller/documents/product_literature/brochures/aeron_chairs_brochure.pdf",
+      "format": "pdf",
+      "pages": 12,
+      "document_year": 2026,
+      "verification": "downloaded_and_text_extracted",
+      "byte_length": 9611709,
+      "sha256": "a3c558d7fa44f4f6b8c452e8319a653f49f35c87f873bebb95ea4189b7f3b654",
+      "purpose": "One product family spread over many pages; image-only pages must not be dropped as empty."
+    },
+    {
+      "id": "hm-aeron-specs",
+      "brand": "Herman Miller",
+      "title": "Aeron Chair specifications",
+      "url": "https://www.hermanmiller.com/products/seating/office-chairs/aeron-chair/specs/",
+      "format": "html_product",
+      "document_year": null,
+      "verification": "public_page_read",
+      "purpose": "12 size/arm combinations, ranges and labeled seat versus overall dimensions. Differences from PDF require configuration and version reconciliation."
+    },
+    {
+      "id": "hm-aeron-resources",
+      "brand": "Herman Miller",
+      "title": "Aeron Chair professional resources",
+      "url": "https://www.hermanmiller.com/products/seating/office-chairs/aeron-chair/pro-resources/",
+      "format": "html_asset_index",
+      "document_year": null,
+      "verification": "public_page_read_model_links_listed_only",
+      "purpose": "Official Revit, SketchUp and CAD links; individual model binaries and Revit compatibility have not been validated."
+    },
+    {
+      "id": "hm-wireframe-web",
+      "brand": "Herman Miller",
+      "title": "Wireframe Sofa product page",
+      "url": "https://store.hermanmiller.com/living-room-furniture-sofas/wireframe-sofa/2195905.html?lang=en_US",
+      "format": "html_product",
+      "document_year": null,
+      "verification": "public_page_read",
+      "purpose": "Two-seat/three-seat variants; fraction-inch dimensions; distinguish active SKU and gallery state from all listed variant specifications."
+    },
+    {
+      "id": "steelcase-gesture-pdf",
+      "brand": "Steelcase",
+      "title": "Gesture product brochure",
+      "url": "https://www.steelcase.com/resources/documents/gesture-brochure",
+      "format": "pdf",
+      "pages": 3,
+      "document_year": 2025,
+      "document_date_label": "02/25",
+      "verification": "pdf_text_read",
+      "purpose": "Extensionless URL returns application/pdf; page 2 lists five styles, page 3 has dimensions/materials. Ranges must retain pose/configuration context."
+    },
+    {
+      "id": "steelcase-wood-pdf",
+      "brand": "Steelcase",
+      "title": "Wood Seating Specification Guide",
+      "url": "https://www.steelcase.com/content/uploads/2014/12/woodseating1.pdf",
+      "format": "pdf",
+      "pages": 84,
+      "document_year": 2015,
+      "document_date_label": "April 2015",
+      "verification": "pdf_text_read",
+      "historical_structure_sample_only": true,
+      "purpose": "Nonadjacent Understanding/Specifying sections, continuation tables, model codes. Not evidence of current availability or prices."
+    },
+    {
+      "id": "knoll-klounge-pdf",
+      "brand": "Knoll",
+      "title": "k. lounge Collection product sheet",
+      "url": "https://library.hermanmiller.group/asset/366507bc-22b6-43cc-83cd-4b3d7bb61590/klounge_collection.pdf",
+      "format": "pdf",
+      "pages": 2,
+      "document_year": 2016,
+      "verification": "pdf_text_read_by_parallel_reviewer_root_fetch_intermittent_error",
+      "purpose": "Eleven modules in older PDF; model codes and diagram dimensions lose associations in plain text."
+    },
+    {
+      "id": "knoll-klounge-web",
+      "brand": "Knoll",
+      "title": "k. lounge product page",
+      "url": "https://www.knoll.com/product/k-lounge",
+      "format": "html_product",
+      "document_year": null,
+      "verification": "public_page_read",
+      "purpose": "Current page describes 20 modules; model tables and old PDF must not be silently reconciled by overwriting either source."
+    },
+    {
+      "id": "knoll-saarinen-pdf",
+      "brand": "Knoll",
+      "title": "Saarinen Pedestal Collection product sheet",
+      "url": "https://library.hermanmiller.group/asset/a15f5618-ae2d-41f6-8d5a-94eedfa7b0d9/saarinen_pedestal_collection_product_sheet.pdf",
+      "format": "pdf",
+      "pages": 2,
+      "document_year": null,
+      "verification": "pdf_text_read_by_parallel_reviewer_root_fetch_intermittent_error",
+      "purpose": "Round/oval dining, side and coffee tables. A range of collection dimensions is not a Cartesian product of purchasable configurations."
+    },
+    {
+      "id": "muuto-fiber-web",
+      "brand": "Muuto",
+      "title": "Fiber Armchair Tube Base",
+      "url": "https://www.muuto.com/product/Fiber-Armchair-Tube-Base",
+      "format": "html_product",
+      "document_year": null,
+      "verification": "public_page_read",
+      "purpose": "Explicit SKU and dual-unit dimensions; related Fiber products and gallery finishes must not be assigned to the active variant."
+    },
+    {
+      "id": "muuto-downloads",
+      "brand": "Muuto",
+      "title": "Digital showroom downloads",
+      "url": "https://download.muuto.com/digitalshowroom/",
+      "format": "dynamic_asset_portal",
+      "document_year": null,
+      "verification": "entry_opened_dynamic_shell_only",
+      "purpose": "Product page links factsheets, images, 2D/3D/Revit. File URLs, login conditions and model versions remain unverified."
+    },
+    {
+      "id": "hay-aac22-web",
+      "brand": "HAY",
+      "title": "AAC22 black shell / lacquered oak base variant",
+      "url": "https://www.hay.com/hay/furniture/seating/chair/about-a-chair/aac22-lacquered-oak-4-leg-base-standard-glider-black-20-shell-none-none",
+      "format": "html_product",
+      "document_year": null,
+      "verification": "public_page_read_by_parallel_reviewer",
+      "purpose": "Explicit SKU AA207-D168-AA51-01UF and H79 x W59 x L52; unit not explicit in observed field, so do not normalize it by guessing."
+    },
+    {
+      "id": "hay-catalogues",
+      "brand": "HAY",
+      "title": "Official catalogues",
+      "url": "https://www.hay.com/footer/catalogues",
+      "format": "html_flipbook_index",
+      "document_year": null,
+      "catalogue_label_year": 2026,
+      "verification": "index_read_flipbook_contents_not_validated",
+      "purpose": "HAY Newspaper 2026 and collection catalogues link to Issuu. Contents and download availability need a supported public reader path."
+    },
+    {
+      "id": "hay-planning",
+      "brand": "HAY",
+      "title": "Professional planning resources",
+      "url": "https://www.hay.com/professionals/planning",
+      "format": "html_asset_index",
+      "document_year": null,
+      "verification": "public_page_read_by_parallel_reviewer",
+      "purpose": "Official pCon route includes Revit; no software installed or particular model/credentials verified."
+    },
+    {
+      "id": "vitra-allstar-web",
+      "brand": "Vitra",
+      "title": "Allstar product page",
+      "url": "https://www.vitra.com/en-us/product/allstar",
+      "format": "html_product",
+      "document_year": null,
+      "verification": "public_page_read",
+      "purpose": "Product images, CAD/dimension sections, adjustable chair dimensions. Design year 2014 is not the publication date."
+    },
+    {
+      "id": "vitra-allstar-factbook",
+      "brand": "Vitra",
+      "title": "Allstar English Factbook",
+      "url": "https://static.vitra.com/media/asset/854608/storage/master/download/Factbook%2520Allstar-EN.pdff",
+      "format": "pdf",
+      "pages": 14,
+      "document_year": 2025,
+      "verification": "pdf_text_read_by_parallel_reviewer_screenshot_and_stable_download_not_validated",
+      "purpose": "Unusual .pdff extension, multipage dimensions/materials; later screenshot fetches failed with 403/404."
+    },
+    {
+      "id": "vitra-downloads",
+      "brand": "Vitra",
+      "title": "Official downloads portal",
+      "url": "https://downloads.vitra.com/",
+      "format": "dynamic_asset_portal",
+      "document_year": null,
+      "verification": "http_403_observed",
+      "purpose": "Do not infer login requirements from 403 or claim specific BIM assets verified."
+    }
+  ],
+  "planned_input_tiers": {
+    "first": [
+      "local_pdf",
+      "public_pdf_url",
+      "html_product_url",
+      "html_collection_url",
+      "png_jpeg_webp_images",
+      "bounded_mixed_folder_or_zip"
+    ],
+    "next": [
+      "public_flipbook_reader_or_export",
+      "csv_xlsx_product_manifest"
+    ]
+  },
+  "expected_examples": {
+    "authoring": "Manually reviewed expected values for future parser acceptance, not automatic parser output",
+    "products": [
+      {
+        "source_id": "hm-wireframe-web",
+        "brand": "Herman Miller",
+        "product": "Wireframe Sofa",
+        "variant": "2-Seat Sofa",
+        "sku": null,
+        "source_locator": "Dimensions > 2-Seat Sofa",
+        "raw_dimensions": {
+          "height": "29½ in",
+          "width": "63 in",
+          "depth": "34½ in"
+        },
+        "expected_dimensions_mm": {
+          "height": 749.3,
+          "width": 1600.2,
+          "depth": 876.3
+        },
+        "note": "Do not copy the selected three-seat SKU or gallery into this variant without evidence."
+      },
+      {
+        "source_id": "hm-wireframe-web",
+        "brand": "Herman Miller",
+        "product": "Wireframe Sofa",
+        "variant": "3-Seat Sofa",
+        "sku": null,
+        "source_locator": "Dimensions > 3-Seat Sofa",
+        "raw_dimensions": {
+          "height": "29½ in",
+          "width": "89¼ in",
+          "depth": "34½ in"
+        },
+        "expected_dimensions_mm": {
+          "height": 749.3,
+          "width": 2266.95,
+          "depth": 876.3
+        },
+        "note": "SKU deliberately unbound until active finish/size state is captured."
+      },
+      {
+        "source_id": "muuto-fiber-web",
+        "brand": "Muuto",
+        "product": "Fiber Armchair Tube Base",
+        "sku": "FIARMTUN01011",
+        "source_locator": "Product specifications > New item no. and Dimensions",
+        "raw_dimensions": {
+          "height": "77.00 cm",
+          "width": "54.50 cm",
+          "depth": "56.00 cm",
+          "seat_height": "46.00 cm"
+        },
+        "expected_dimensions_mm": {
+          "height": 770,
+          "width": 545,
+          "depth": 560,
+          "seat_height": 460
+        },
+        "note": "Keep documented centimetres as the source values; rounded parallel inches need not convert back exactly."
+      },
+      {
+        "source_id": "hay-aac22-web",
+        "brand": "HAY",
+        "product": "AAC22",
+        "sku": "AA207-D168-AA51-01UF",
+        "raw_dimensions": "H79 x W59 x L52",
+        "expected_dimensions_mm": null,
+        "requires_review": [
+          "unit_not_explicit_in_observed_field"
+        ]
+      }
+    ]
+  },
+  "validation_gaps": [
+    "No runtime PDF/HTML catalog adapter was implemented or exercised.",
+    "No complete six-brand extraction accuracy benchmark exists yet.",
+    "No Tripo paid generation was performed.",
+    "No downloaded official model was loaded in Revit.",
+    "Some dynamic portals and binary links have partial access evidence only."
+  ],
+  "parser_checked_on": "2026-09-10",
+  "parser_receipts": [
+    {
+      "source_id": "muuto-fiber-web",
+      "input_sha256": "7252f4571ba62799e99738313501b7ff9da7dacecd98023106ab442947d4d2d0",
+      "input": "saved official HTML",
+      "products": 1,
+      "image_candidates": 4,
+      "dimension_fields": 5,
+      "overall_mm": {
+        "width": 545,
+        "depth": 560,
+        "height": 770
+      },
+      "review_accepted": false,
+      "live_https_check": {
+        "url": "https://www.muuto.com/product/Fiber-Armchair-Tube-Base",
+        "sha256": "0522ec9e9b6d907300e4794edf77b387bdbdee158b4617063c05af45cff75cae",
+        "products": 1,
+        "image_candidates": 4
+      }
+    },
+    {
+      "source_id": "hm-wireframe-web",
+      "input_sha256": "b22414edb2664e18306fe8ec83a203b65c2ab5da2ddae79b55a3d61e474469af",
+      "input": "saved official HTML",
+      "sku_variants": 50,
+      "image_candidates": 50,
+      "dimension_fields_per_variant": 5,
+      "width_mm_by_variant": {
+        "2-Seat Sofa": 1600.2,
+        "3-Seat Sofa": 2266.95
+      },
+      "association": "exact structured size label to visible specification section",
+      "review_accepted": false
+    },
+    {
+      "source_id": "hm-oe1-pdf",
+      "input_sha256": "2415f22d097649fb179f2f54ba2de99e55eb9b797b570811c57083e3044200d2",
+      "pages": 11,
+      "review_candidates": 27,
+      "extracted_images": 33,
+      "page_10_image_tiles": 19,
+      "page_10_uniquely_paired_product_images": 17,
+      "page_10_composite_images_retained_for_review": 2,
+      "cross_page_exact_heading_merge": "OE1 Nook",
+      "dimensions": "not supplied by this brochure; manual or specification-source enrichment required",
+      "review_accepted": false
+    }
+  ],
+  "parser_receipt_note": "Run through the Release catalog CLI against retained public source samples. Manufacturer PDFs, HTML, photographs and extracted binaries are excluded from Git. No paid generation or real Revit host acceptance was performed."
+}

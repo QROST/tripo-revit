@@ -15,11 +15,19 @@ each target.
 
 It is not an official Tripo or Autodesk product.
 
+The **Catalog Families** ribbon command adds a furniture workflow: read PDFs
+(including JPEG2000 images), HTML/product URLs or image files; group and review
+products; confirm overall dimensions and one generation image; then generate,
+save and place Furniture families in rows. Progress is saved locally and
+uncertain operations retain their original IDs. This first version produces
+fixed mesh families. See [workflow and limits](./docs/CATALOG-WORKFLOW.md) and
+[official catalog sources](./docs/CATALOG-INPUT-SOURCES.md).
+
 ```text
 Revit WPF window            MCP client
        ↕ host-control          ↕ stdio
        Tripo.Revit.Mcp sidecar / server ── Tripo v3 HTTPS API
-                    ↕ authenticated protocol-v3 host bridge
+                    ↕ authenticated protocol-v4 host bridge
                  Tripo.Revit add-in
                     ↕ bounded ExternalEvent FIFO + transactions
                  exact active Revit project document
@@ -139,7 +147,7 @@ Building the host project also builds the matching sidecar and copies its
 complete output into
 `src/Tripo.Revit/bin/Release/net8.0-windows/<RevitYear>/sidecar/`. The separate
 `src/Tripo.Revit.Mcp/bin/Release/net8.0/` output is needed only for the optional MCP
-path. Bridge protocol v3 and host-control protocol v8 have no
+path. Bridge protocol v4 and host-control protocol v9 have no
 backward-compatibility shim, so deploy all components from the same repository
 revision.
 

@@ -3,7 +3,7 @@ using Xunit;
 
 namespace Tripo.Mcp.Tests;
 
-public sealed class HostControlDispatcherTests
+public sealed partial class HostControlDispatcherTests
 {
     [Fact]
     public async Task CredentialSetResponseNeverContainsTheApiKey()
@@ -451,6 +451,37 @@ public sealed class HostControlDispatcherTests
 
     private sealed class FakeWorkflow : Tripo.Mcp.ITripoWorkflow
     {
+        public Tripo.Bridge.HostControlCreateObjConversionRequest? LastCatalogConversionRequest { get; private set; }
+
+        public Task<Tripo.Mcp.ImageTaskCreationReceipt> CreateCatalogImageTaskAsync(
+            Tripo.Bridge.HostControlCreateImageTaskRequest request, CancellationToken cancellationToken)
+        {
+            LastImageRequest = request;
+            return Task.FromResult(new Tripo.Mcp.ImageTaskCreationReceipt(request.OperationId,
+                "task_image123", request.Model!, request.Image.Sha256));
+        }
+
+        public Task<Tripo.Mcp.ObjConversionCreationReceipt> CreateCatalogObjConversionAsync(
+            Tripo.Bridge.HostControlCreateObjConversionRequest request, CancellationToken cancellationToken)
+        {
+            LastCatalogConversionRequest = request;
+            return Task.FromResult(new Tripo.Mcp.ObjConversionCreationReceipt(request.OperationId,
+                request.SourceTaskId, "task_conversion123", "OBJ"));
+        }
+
+        public Tripo.Bridge.HostControlImportObjTaskRequest? LastCatalogRequest { get; private set; }
+
+        public Task<Tripo.Mcp.ObjTaskImportReceipt> ImportCatalogObjTaskAsync(
+            string conversionTaskId, string name, string documentSessionId, string operationId,
+            bool applyMaterials, Tripo.Bridge.CatalogFamilyOptions catalog, CancellationToken cancellationToken,
+            bool requireExistingImport = false)
+        {
+            LastCatalogRequest = new(conversionTaskId, name, documentSessionId, operationId,
+                "family", applyMaterials, Catalog: catalog, RequireExistingImport: requireExistingImport);
+            return ImportObjTaskAsync(conversionTaskId, name, documentSessionId, operationId,
+                "family", applyMaterials, cancellationToken);
+        }
+
         public int CreateTextCalls { get; private set; }
 
         public bool ThrowCredentialOnText { get; init; }

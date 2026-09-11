@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Tripo.Catalog</AssemblyName>
+    <RootNamespace>Tripo.Catalog</RootNamespace>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="AngleSharp" />
+    <PackageReference Include="PdfPig" />
+    <PackageReference Include="PdfPig.Filters.Jpx.OpenJpeg" />
+    <ProjectReference Include="../Tripo.Bridge/Tripo.Bridge.csproj" />
+    <ProjectReference Include="../Tripo.HostUi/Tripo.HostUi.csproj" />
+    <Compile Include="../Tripo.Mcp/PublicNetworkConnector.cs" Link="Internal/PublicNetworkConnector.cs" />
+  </ItemGroup>
+</Project>

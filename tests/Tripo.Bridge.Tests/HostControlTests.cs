@@ -198,7 +198,7 @@ public sealed class HostControlTests
         Tripo.Bridge.HostControlResponse response =
             await SendRawAsync(descriptor, request);
 
-        Assert.Equal("8", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("9", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.False(response.Ok);
         Assert.Equal("unsupported_protocol", response.Error?.Code);
         Assert.Equal(0, dispatcher.CallCount);
@@ -288,7 +288,7 @@ public sealed class HostControlTests
     }
 
     [Fact]
-    public async Task DiscoveryRejectsImmediatelyPreviousV7Descriptor()
+    public async Task DiscoveryRejectsImmediatelyPreviousV8Descriptor()
     {
         using TemporaryDataRoot dataRoot = new();
         await using Tripo.Bridge.NamedPipeHostControlServer server =
@@ -300,7 +300,7 @@ public sealed class HostControlTests
         Tripo.Bridge.HostControlSessionDescriptor legacy =
             server.Descriptor with
             {
-                ProtocolVersion = "7",
+                ProtocolVersion = "8",
             };
         File.WriteAllText(
             path,
@@ -314,7 +314,7 @@ public sealed class HostControlTests
                 "rhino",
                 Environment.ProcessId));
 
-        Assert.Equal("8", Tripo.Bridge.HostControlConstants.ProtocolVersion);
+        Assert.Equal("9", Tripo.Bridge.HostControlConstants.ProtocolVersion);
         Assert.Equal("sidecar_unavailable", exception.Code);
     }
 

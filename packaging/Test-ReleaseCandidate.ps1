@@ -20,7 +20,7 @@ function Write-FixtureFile([string] $Root, [string] $RelativePath, [string] $Val
 function New-Fixture([string] $Name) {
   $root = Join-Path $testRoot $Name
   Write-FixtureFile $root "VERSION" "1.2.3"
-  foreach ($document in @("README.md", "README.zh-CN.md", "LICENSE", "NOTICE")) {
+  foreach ($document in @("README.md", "README.zh-CN.md", "LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md")) {
     Write-FixtureFile $root $document
   }
   Write-FixtureFile $root "packaging/placeholder"
@@ -35,6 +35,11 @@ function New-Fixture([string] $Name) {
     "src/Tripo.Revit/bin/Release/net8.0-windows/2026/sidecar/Tripo.Revit.Mcp.dll"
   )) {
     Write-FixtureFile $root $inputPath
+  }
+  foreach ($year in @(2025, 2026)) {
+    foreach ($assembly in @("Tripo.Catalog.dll", "AngleSharp.dll", "UglyToad.PdfPig.dll", "UglyToad.PdfPig.Filters.Jpx.OpenJpeg.dll")) {
+      Write-FixtureFile $root "src/Tripo.Revit/bin/Release/net8.0-windows/$year/$assembly"
+    }
   }
   return $root
 }
@@ -73,6 +78,12 @@ try {
       Assert-True ($members -ccontains "$candidateName/$member") "Archive is missing $member."
     }
   } finally { $zip.Dispose() }
+  foreach ($year in @(2025, 2026)) {
+    foreach ($assembly in @("Tripo.Catalog.dll", "AngleSharp.dll", "UglyToad.PdfPig.dll", "UglyToad.PdfPig.Filters.Jpx.OpenJpeg.dll")) {
+      Assert-True ($members -ccontains "$candidateName/Addins/$year/TripoRevit/$assembly") "Archive is missing catalog dependency $assembly for $year."
+    }
+  }
+  Assert-True ($members -ccontains "$candidateName/THIRD-PARTY-NOTICES.md") "Archive is missing third-party licenses."
   Assert-Refused { Invoke-Candidate $root } "Candidate already exists"
   Assert-True ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $hash) "Existing ZIP changed."
   Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $root "artifacts") -Force).Count -eq 3) "Unexpected successful-build leftovers."
@@ -122,6 +133,10 @@ try {
   $root = New-Fixture "missing document"
   Remove-Item -LiteralPath (Join-Path $root "LICENSE")
   Assert-Refused { Invoke-Candidate $root } ""
+  Assert-NoArtifacts $root
+  $root = New-Fixture "missing catalog runtime"
+  Remove-Item -LiteralPath (Join-Path $root "src/Tripo.Revit/bin/Release/net8.0-windows/2026/AngleSharp.dll")
+  Assert-Refused { Invoke-Candidate $root } "Required release input is missing"
   Assert-NoArtifacts $root
   foreach ($years in @(@(), @(2024), @(2026, 2026))) {
     $root = New-Fixture "invalid-years-$([Guid]::NewGuid().ToString('N'))"

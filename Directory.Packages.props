@@ -3,6 +3,9 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="AngleSharp" Version="1.7.3" />
+    <PackageVersion Include="PdfPig" Version="0.1.16" />
+    <PackageVersion Include="PdfPig.Filters.Jpx.OpenJpeg" Version="0.1.16.1" />
     <!-- Default catalog entry; Tripo.Revit overrides per build via $(RevitSdkVersion). -->
     <PackageVersion Include="Autodesk.Revit.SDK" Version="2026.0.0.9999" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.7" />

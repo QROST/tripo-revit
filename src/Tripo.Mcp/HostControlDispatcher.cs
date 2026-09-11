@@ -241,7 +241,9 @@ internal sealed class HostControlDispatcher :
             Deserialize<Tripo.Bridge.HostControlCreateImageTaskRequest>(
                 payload);
         ImageTaskCreationReceipt receipt =
-            await _workflow.CreateImageTaskAsync(
+            request.CredentialAnchor is not null
+                ? await _workflow.CreateCatalogImageTaskAsync(request, cancellationToken).ConfigureAwait(false)
+                : await _workflow.CreateImageTaskAsync(
                     request.Image,
                     request.FaceLimit,
                     request.WithMaterials,
@@ -318,7 +320,9 @@ internal sealed class HostControlDispatcher :
             Deserialize<Tripo.Bridge.HostControlCreateObjConversionRequest>(
                 payload);
         ObjConversionCreationReceipt receipt =
-            await _workflow.CreateObjConversionAsync(
+            request.CredentialAnchor is not null
+                ? await _workflow.CreateCatalogObjConversionAsync(request, cancellationToken).ConfigureAwait(false)
+                : await _workflow.CreateObjConversionAsync(
                     request.SourceTaskId,
                     request.FaceLimit,
                     request.WithMaterials,
@@ -341,8 +345,29 @@ internal sealed class HostControlDispatcher :
     {
         Tripo.Bridge.HostControlImportObjTaskRequest request =
             Deserialize<Tripo.Bridge.HostControlImportObjTaskRequest>(payload);
+        if (request.RequireExistingImport && request.Catalog is null)
+        {
+            throw new ArgumentException("RequireExistingImport requires catalog options.");
+        }
+        if (request.Catalog is not null &&
+            (request.ImportMode != "family" ||
+             request.PlacementMode != "origin" || request.AssociateLevel))
+        {
+            throw new ArgumentException(
+                "Catalog imports use family mode and explicit catalog placement.");
+        }
         ObjTaskImportReceipt receipt =
-            await _workflow.ImportObjTaskAsync(
+            request.Catalog is not null
+                ? await _workflow.ImportCatalogObjTaskAsync(
+                    request.ConversionTaskId,
+                    request.Name,
+                    request.DocumentSessionId,
+                    request.OperationId,
+                    request.ApplyMaterials,
+                    request.Catalog,
+                    cancellationToken,
+                    request.RequireExistingImport).ConfigureAwait(false)
+                : await _workflow.ImportObjTaskAsync(
                     request.ConversionTaskId,
                     request.Name,
                     request.DocumentSessionId,

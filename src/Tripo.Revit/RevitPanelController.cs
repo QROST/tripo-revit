@@ -8,6 +8,7 @@ internal sealed class RevitPanelController : IDisposable
     private readonly object _cleanupGate = new();
     private readonly HashSet<Task> _sessionDisposals = [];
     private TripoRevitWindow? _window;
+    private TripoCatalogWindow? _catalogWindow;
     private bool _disposed;
 
     public RevitPanelController(
@@ -45,6 +46,26 @@ internal sealed class RevitPanelController : IDisposable
         window.Show();
     }
 
+    public void ShowCatalog(IntPtr ownerHandle)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_catalogWindow is not null)
+        {
+            _catalogWindow.WindowState = System.Windows.WindowState.Normal;
+            _catalogWindow.Activate();
+            return;
+        }
+        TripoCatalogWindow window = new(_connector);
+        new WindowInteropHelper(window).Owner = ownerHandle;
+        window.Closed += (_, _) =>
+        {
+            Interlocked.CompareExchange(ref _catalogWindow, null, window);
+            TrackSessionDisposal(window.Completion);
+        };
+        _catalogWindow = window;
+        window.Show();
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -53,6 +74,12 @@ internal sealed class RevitPanelController : IDisposable
         }
 
         _disposed = true;
+        TripoCatalogWindow? catalogWindow = Interlocked.Exchange(ref _catalogWindow, null);
+        if (catalogWindow is not null)
+        {
+            catalogWindow.Close();
+            TrackSessionDisposal(catalogWindow.Completion);
+        }
         TripoRevitWindow? window = Interlocked.Exchange(ref _window, null);
         if (window is not null)
         {

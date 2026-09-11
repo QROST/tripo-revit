@@ -12,11 +12,16 @@ Generation 与 conversion 不绑定 Revit project，因此同一个 conversion �
 
 它不是 Tripo 或 Autodesk 官方产品。
 
+新增 **Catalog Families** 功能：读取 PDF（含 JPEG2000 图片）、HTML／产品网址或图片文件，
+按产品归组并复核，确认整体尺寸及一张生成参考图，再批量生成、保存家具族并按行排放。
+进度保存在本地，恢复沿用原任务编号。第一版输出固定网格家具族。
+见[目录工作流与限制](./docs/CATALOG-WORKFLOW.md)及[官方目录来源](./docs/CATALOG-INPUT-SOURCES.md)。
+
 ```text
 Revit WPF window            MCP client
        ↕ host-control          ↕ stdio
        Tripo.Revit.Mcp sidecar / server ── Tripo v3 HTTPS API
-                    ↕ authenticated protocol-v3 host bridge
+                    ↕ authenticated protocol-v4 host bridge
                  Tripo.Revit add-in
                     ↕ bounded ExternalEvent FIFO + transactions
                  exact active Revit project document
@@ -115,8 +120,8 @@ Revit 2025 或 2026。
 
 构建 host project 时，也会构建 matching sidecar，并把完整输出复制到
 `src/Tripo.Revit/bin/Release/net8.0-windows/<RevitYear>/sidecar/`。只有可选 MCP 路径才需要单独的
-`src/Tripo.Revit.Mcp/bin/Release/net8.0/` 输出。Bridge protocol v3 与 host-control
-protocol v8 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
+`src/Tripo.Revit.Mcp/bin/Release/net8.0/` 输出。Bridge protocol v4 与 host-control
+protocol v9 都没有向后兼容 shim，因此所有组件必须来自同一个仓库 revision。
 
 ## 安装 Revit add-in
 

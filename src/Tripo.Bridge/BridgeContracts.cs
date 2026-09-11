@@ -97,7 +97,10 @@ public sealed record ImportMeshRequest(
     string ImportMode,
     bool ApplyMaterials,
     string PlacementMode = "origin",
-    bool AssociateLevel = false);
+    bool AssociateLevel = false,
+    CatalogFamilyOptions? Catalog = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    bool RequireExisting = false);
 
 public sealed record HostImportReceipt(
     string Host,

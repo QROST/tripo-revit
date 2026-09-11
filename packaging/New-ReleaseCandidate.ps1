@@ -40,6 +40,10 @@ foreach ($revitYear in $RevitYears) {
   $hostOutput = Join-Path $repositoryRoot "src/Tripo.Revit/bin/$Configuration/net8.0-windows/$revitYear"
   foreach ($requiredPath in @(
     (Join-Path $hostOutput "Tripo.Revit.dll"),
+    (Join-Path $hostOutput "Tripo.Catalog.dll"),
+    (Join-Path $hostOutput "AngleSharp.dll"),
+    (Join-Path $hostOutput "UglyToad.PdfPig.dll"),
+    (Join-Path $hostOutput "UglyToad.PdfPig.Filters.Jpx.OpenJpeg.dll"),
     (Join-Path $hostOutput "Tripo.Revit.addin"),
     (Join-Path $hostOutput "sidecar/Tripo.Revit.Mcp.dll")
   )) {
@@ -85,7 +89,7 @@ try {
   }
 
   Copy-Item -Path (Join-Path $mcpOutput "*") -Destination (Join-Path $stagedRoot "mcp") -Recurse -Force
-  foreach ($document in @("README.md", "README.zh-CN.md", "LICENSE", "NOTICE")) {
+  foreach ($document in @("README.md", "README.zh-CN.md", "LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md")) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $document) -Destination $stagedRoot
   }
 

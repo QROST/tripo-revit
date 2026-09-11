@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Autodesk.Revit.DB;
@@ -115,6 +114,18 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                 "This Revit build supports the mesh and family import modes.");
         }
 
+        Tripo.Bridge.CatalogFamilyPreparation.Validate(request);
+
+        if (request.RequireExisting)
+        {
+            // A recovery probe needs only the original immutable request and
+            // persisted receipt. Temporary OBJ/texture staging may be gone.
+            Tripo.Bridge.PreparedMesh emptyMesh = new([], [], [], [], 0);
+            return await _eventPump.EnqueueAsync<object>(
+                application => ImportFamilyInApiContext(application, request, emptyMesh),
+                cancellationToken).ConfigureAwait(false);
+        }
+
         await _eventPump.EnqueueAsync(
                 application =>
                 {
@@ -129,6 +140,11 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                     request,
                     cancellationToken)
                 .ConfigureAwait(false);
+        if (request.Catalog is not null)
+        {
+            prepared = Tripo.Bridge.CatalogFamilyPreparation.Fit(prepared, request.Catalog);
+        }
+
         return await _eventPump.EnqueueAsync<object>(
                 application => isFamily
                     ? ImportFamilyInApiContext(application, request, prepared)
@@ -306,11 +322,20 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
         {
             Entity storedEntity = matches[0].GetEntity(schema);
             string storedFingerprint = storedEntity.Get<string>(RequestFingerprintField);
-            if (!string.Equals(storedFingerprint, fingerprint, StringComparison.Ordinal))
+            if (!request.RequireExisting && !string.Equals(storedFingerprint, fingerprint, StringComparison.Ordinal))
             {
                 throw new Tripo.Bridge.BridgeCallException(
                     "idempotency_conflict",
                     "The Revit idempotency key is already bound to a different import.");
+            }
+
+            if (request.Catalog is not null)
+            {
+                // Recovery probes carry no staged bundle. Verify the independent
+                // catalogue identity and cross-check the stored whole-request
+                // fingerprint against the artifact schema without changing it.
+                return CatalogFamilyAuthoring.ExistingReceipt(matches[0], request, storedFingerprint,
+                    storedEntity.Get<int>(MaterialCountField), storedEntity.Get<int>(TextureCountField));
             }
 
             string? persistedPath = File.Exists(rfaPath) ? rfaPath : null;
@@ -336,12 +361,57 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                 "The Revit idempotency key is already bound to a mesh-mode import.");
         }
 
+        if (request.Catalog is not null)
+        {
+            if (request.RequireExisting)
+            {
+                throw new Tripo.Bridge.BridgeCallException("catalog_import_missing",
+                    "The original catalogue instance is no longer present; recovery will not recreate an undone or deleted import.");
+            }
+
+            // Validate the independent instance transform before opening a family
+            // document or starting a transaction. Family geometry stays local.
+            CatalogFamilyAuthoring.PlacementPoint(request.Catalog);
+            string catalogName = Tripo.Bridge.CatalogFamilyPreparation.FamilyName(request.Name, request.IdempotencyKey);
+            List<Family> existingFamilies = CollectFamiliesByName(document, catalogName);
+            if (existingFamilies.Count > 1)
+            {
+                throw new Tripo.Bridge.BridgeCallException("idempotency_conflict", "Multiple families already use the catalogue import name.");
+            }
+
+            if (existingFamilies.Count == 1)
+            {
+                Family existingFamily = existingFamilies[0];
+                string path = CatalogFamilyAuthoring.ArtifactPath(existingFamily, fingerprint, request);
+                Entity stored = existingFamily.GetEntity(schema);
+                if (!stored.IsValid() || stored.Get<string>(RequestFingerprintField) != fingerprint)
+                {
+                    throw new Tripo.Bridge.BridgeCallException("idempotency_conflict", "The existing catalogue family has no matching import receipt.");
+                }
+
+                // Recreate a deleted instance without overwriting its saved RFA.
+                return LoadFamilyIntoHost(application, document, schema, request, prepared,
+                    path, fingerprint, stored.Get<int>(MaterialCountField), stored.Get<int>(TextureCountField));
+            }
+
+            // Each attempt owns a directory; retries and other Revit processes
+            // cannot overwrite a previously saved family. The actual path is
+            // persisted on the family and instance in the import transaction.
+            rfaPath = Path.Combine(Tripo.Bridge.BridgePaths.GetFamiliesDirectory(),
+                "catalog-" + Guid.NewGuid().ToString("N"), catalogName + ".rfa");
+        }
+
         string templatePath = ResolveFamilyTemplate(application);
         int materialCount;
         int textureCount;
-        Document familyDocument = application.Application.NewFamilyDocument(templatePath);
+        if (request.Catalog is not null)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(rfaPath)!);
+        }
+
         try
         {
+            Document familyDocument = application.Application.NewFamilyDocument(templatePath);
             BuildFamilyDocument(
                 familyDocument,
                 request,
@@ -361,7 +431,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                     Code: "family_close_failed",
                 })
             {
-                Tripo.Bridge.BridgePaths.TryDelete(rfaPath);
+                DeleteFailedFamilyArtifact(rfaPath, request.Catalog is not null);
             }
 
             throw;
@@ -382,7 +452,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
         }
         catch
         {
-            Tripo.Bridge.BridgePaths.TryDelete(rfaPath);
+            DeleteFailedFamilyArtifact(rfaPath, request.Catalog is not null);
             throw;
         }
     }
@@ -443,6 +513,11 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                         new ElementId(BuiltInCategory.OST_GenericModel));
                     directShape.SetShape(geometry);
 
+                    if (request.Catalog is not null)
+                    {
+                        CatalogFamilyAuthoring.Configure(familyDocument, request.Catalog);
+                    }
+
                     TransactionStatus commitStatus = familyTransaction.Commit();
                     if (commitStatus != TransactionStatus.Committed)
                     {
@@ -464,7 +539,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
 
             SaveAsOptions saveOptions = new()
             {
-                OverwriteExistingFile = true,
+                OverwriteExistingFile = request.Catalog is null,
             };
             familyDocument.SaveAs(rfaPath, saveOptions);
         }
@@ -494,8 +569,9 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
         int materialCount,
         int textureCount)
     {
-        string familyName =
-            SanitizeRevitName(request.Name, 64, "TripoModel") +
+        string familyName = request.Catalog is not null
+            ? Tripo.Bridge.CatalogFamilyPreparation.FamilyName(request.Name, request.IdempotencyKey)
+            : SanitizeRevitName(request.Name, 64, "TripoModel") +
             "_" +
             request.IdempotencyKey[..8];
 
@@ -526,6 +602,10 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                 // LoadFamily followed by the rename would collide with this
                 // surviving duplicate name and throw.
                 family = existingFamilies[0];
+                if (request.Catalog is not null)
+                {
+                    CatalogFamilyAuthoring.ArtifactPath(family, fingerprint, request);
+                }
                 if (family.GetFamilySymbolIds().FirstOrDefault() is null)
                 {
                     throw new Tripo.Bridge.BridgeCallException(
@@ -535,7 +615,7 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             }
             else if (!document.LoadFamily(
                          rfaPath,
-                         new RevitFamilyLoadOptions(),
+                         request.Catalog is null ? new RevitFamilyLoadOptions() : new CatalogFamilyLoadOptions(),
                          out Family loaded) ||
                      loaded is null)
             {
@@ -550,7 +630,11 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             }
 
             ISet<ElementId> symbolIds = family.GetFamilySymbolIds();
-            ElementId? firstSymbolId = symbolIds.FirstOrDefault();
+            ElementId? firstSymbolId = request.Catalog is null
+                ? symbolIds.FirstOrDefault()
+                : symbolIds.FirstOrDefault(id =>
+                    document.GetElement(id) is FamilySymbol candidate &&
+                    candidate.Name == Tripo.Bridge.CatalogFamilyPreparation.TypeName(request.Catalog));
             if (firstSymbolId is null)
             {
                 throw new Tripo.Bridge.BridgeCallException(
@@ -567,8 +651,9 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
                 document.Regenerate();
             }
 
+            XYZ placement = request.Catalog is null ? XYZ.Zero : CatalogFamilyAuthoring.PlacementPoint(request.Catalog);
             FamilyInstance instance = document.Create.NewFamilyInstance(
-                XYZ.Zero,
+                placement,
                 symbol,
                 Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
 
@@ -578,6 +663,13 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             entity.Set<int>(MaterialCountField, materialCount);
             entity.Set<int>(TextureCountField, textureCount);
             instance.SetEntity(entity);
+            if (request.Catalog is not null)
+            {
+                CatalogFamilyAuthoring.Rotate(document, instance, placement, request.Catalog);
+                CatalogFamilyAuthoring.RecordArtifact(family, request, fingerprint, rfaPath, prepared);
+                CatalogFamilyAuthoring.RecordArtifact(instance, request, fingerprint, rfaPath, prepared);
+                family.SetEntity(entity);
+            }
 
             TransactionStatus commitStatus = transaction.Commit();
             if (commitStatus != TransactionStatus.Committed)
@@ -607,7 +699,9 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             throw;
         }
 
-        string? placementNote = ApplyPlacementAfterCommit(
+        string? placementNote = request.Catalog is not null
+            ? "Placed at confirmed catalogue coordinates; rotation committed with import"
+            : ApplyPlacementAfterCommit(
             application,
             document,
             createdId,
@@ -621,8 +715,23 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
             "committed",
             materialCount,
             textureCount,
-            rfaPath,
+            File.Exists(rfaPath) ? rfaPath : null,
             placementNote);
+    }
+
+    private static void DeleteFailedFamilyArtifact(string path, bool catalog)
+    {
+        Tripo.Bridge.BridgePaths.TryDelete(path);
+        if (catalog)
+        {
+            try
+            {
+                // Non-recursive deletion preserves any unexpected file.
+                Directory.Delete(Path.GetDirectoryName(path)!);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     private static IList<GeometryObject> BuildGeometry(
@@ -1386,21 +1495,5 @@ internal sealed class RevitBridgeDispatcher : Tripo.Bridge.IHostBridgeDispatcher
     }
 
     private static string CreateRequestFingerprint(
-        Tripo.Bridge.ImportMeshRequest request)
-    {
-        // Host-side import identity is content, not session: the session is
-        // blanked so a cross-restart replay (same key, new session) recovers
-        // instead of conflicting. The active-session check enforces session
-        // correctness separately. Placement preferences are UX-only and must
-        // not change the content fingerprint.
-        byte[] canonical = JsonSerializer.SerializeToUtf8Bytes(
-            request with
-            {
-                DocumentSessionId = string.Empty,
-                PlacementMode = "origin",
-                AssociateLevel = false,
-            },
-            Tripo.Bridge.BridgeJson.Options);
-        return Convert.ToHexString(SHA256.HashData(canonical)).ToLowerInvariant();
-    }
+        Tripo.Bridge.ImportMeshRequest request) => Tripo.Bridge.CatalogImportIdentity.Fingerprint(request);
 }

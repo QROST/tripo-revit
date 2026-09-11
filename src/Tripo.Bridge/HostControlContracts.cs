@@ -181,7 +181,15 @@ public sealed record HostControlCreateImageTaskRequest(
     string OperationId,
     bool ConfirmExternalCost,
     bool RequireExistingOperation = false,
-    string? Model = null);
+    string? Model = null,
+    HostControlImageCredentialAnchor? CredentialAnchor = null);
+
+public sealed record HostControlImageCredentialAnchor(
+    string OperationId,
+    StagedImageTransfer Image,
+    int FaceLimit,
+    bool WithMaterials,
+    string Model);
 
 public sealed record HostControlImageTaskCreationReceipt(
     string OperationId,
@@ -231,7 +239,8 @@ public sealed record HostControlCreateObjConversionRequest
         bool WithMaterials,
         string OperationId,
         bool ConfirmExternalCost,
-        bool RequireExistingOperation = false)
+        bool RequireExistingOperation = false,
+        HostControlImageCredentialAnchor? CredentialAnchor = null)
     {
         this.SourceTaskId = SourceTaskId;
         this.FaceLimit = FaceLimit;
@@ -239,6 +248,7 @@ public sealed record HostControlCreateObjConversionRequest
         this.OperationId = OperationId;
         this.ConfirmExternalCost = ConfirmExternalCost;
         this.RequireExistingOperation = RequireExistingOperation;
+        this.CredentialAnchor = CredentialAnchor;
     }
 
     public string SourceTaskId { get; }
@@ -252,6 +262,8 @@ public sealed record HostControlCreateObjConversionRequest
     public bool ConfirmExternalCost { get; }
 
     public bool RequireExistingOperation { get; }
+
+    public HostControlImageCredentialAnchor? CredentialAnchor { get; }
 }
 
 public sealed record HostControlObjConversionCreationReceipt(
@@ -268,7 +280,9 @@ public sealed record HostControlImportObjTaskRequest(
     string ImportMode,
     bool ApplyMaterials,
     string PlacementMode = "origin",
-    bool AssociateLevel = false);
+    bool AssociateLevel = false,
+    CatalogFamilyOptions? Catalog = null,
+    bool RequireExistingImport = false);
 
 public sealed record HostControlObjTaskImportReceipt(
     string OperationId,

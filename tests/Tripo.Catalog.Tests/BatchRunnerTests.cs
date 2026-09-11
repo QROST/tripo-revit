@@ -467,10 +467,19 @@ public sealed class BatchRunnerTests : IDisposable
             return FakeClient.ImageReceipt(request);
         };
         Task<CatalogBatchSnapshot> active = Runner().RunAsync(plan, true, default);
-        await reached.Task;
-        try { await Assert.ThrowsAnyAsync<IOException>(() => Runner().RunAsync(plan, true, default)); }
-        finally { release.SetResult(); }
-        Assert.Equal(CatalogBatchStatus.Completed, (await active).Status);
+        try
+        {
+            await Task.WhenAny(reached.Task, active).WaitAsync(TimeSpan.FromSeconds(10));
+            if (!reached.Task.IsCompleted)
+            {
+                // Surface storage/platform failures before dispatch instead of waiting forever.
+                await active;
+                Assert.Fail("Batch ended before reaching the blocked image dispatch.");
+            }
+            await Assert.ThrowsAnyAsync<IOException>(() => Runner().RunAsync(plan, true, default));
+        }
+        finally { release.TrySetResult(); }
+        Assert.Equal(CatalogBatchStatus.Completed, (await active.WaitAsync(TimeSpan.FromSeconds(10))).Status);
         Assert.Single(_client.Images);
     }
 

@@ -176,13 +176,28 @@ public static class CatalogBatchStorageSafety
     public static FileStream CreatePrivateFile(string path)
     {
         RejectLink(path);
-        FileStreamOptions options = new()
+        FileStream stream;
+        if (OperatingSystem.IsWindows())
         {
-            Mode = FileMode.CreateNew, Access = FileAccess.ReadWrite, Share = FileShare.None,
-            Options = FileOptions.WriteThrough,
-        };
-        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = FileModePrivate;
-        FileStream stream = new(path, options);
+            // Elevated tokens may default new file ownership to Administrators instead of the user.
+            // Supply owner and DACL at creation; never repair or relax an existing file's security.
+            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            SecurityIdentifier owner = identity.User ?? throw new UnauthorizedAccessException();
+            FileSecurity security = new();
+            security.SetOwner(owner);
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new FileSystemAccessRule(owner, FileSystemRights.FullControl, AccessControlType.Allow));
+            stream = new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.Read | FileSystemRights.Write,
+                FileShare.None, 4096, FileOptions.WriteThrough, security);
+        }
+        else
+        {
+            stream = new FileStream(path, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew, Access = FileAccess.ReadWrite, Share = FileShare.None,
+                Options = FileOptions.WriteThrough, UnixCreateMode = FileModePrivate,
+            });
+        }
         try
         {
             ValidatePrivateFile(path);

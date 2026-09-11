@@ -112,8 +112,8 @@ expected label and help relationships.
 ## Catalog family gate
 
 Local development receipt, 2026-09-10 (macOS, .NET SDK 8.0.423): the complete
-Release portable gate passed 587 tests: Bridge 136, HostUi 136, MCP 244, Catalog
-71. Revit 2025 and 2026 host builds both passed with zero warnings/errors;
+Release portable gate passed 589 tests: Bridge 136, HostUi 136, MCP 244, Catalog
+73. Revit 2025 and 2026 host builds both passed with zero warnings/errors;
 release-candidate synthetic regressions passed. The Release CLI also read the
 live Muuto HTTPS product URL and the retained Muuto/Wireframe/OE1 samples. No
 real provider generation, native Revit interaction or published release was
@@ -125,6 +125,11 @@ metadata/placement identity, artifact path checks and rejection of the immediate
 preceding protocol. MCP tests verify complete catalog forwarding and existing-only
 import recovery with zero provider/artifact calls. Packaging refuses missing
 AngleSharp, PdfPig and JPEG2000 decoder assemblies.
+
+Windows storage regressions cover explicit current-user ownership at file creation,
+an owner-only protected ACL, exclusive locking, and rejection of existing files
+owned by a different default token owner. Concurrent-dispatch tests surface failures
+before dispatch and bound their waits instead of hiding storage failures as hangs.
 
 Before accepting the feature in each real Revit year, verify a two-product batch:
 review multiple source pages and images; preview and confirm a URL image; check

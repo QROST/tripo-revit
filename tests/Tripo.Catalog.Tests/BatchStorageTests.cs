@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Tripo.Bridge;
 using Tripo.Catalog.Batch;
 using Tripo.HostUi;
@@ -107,6 +109,56 @@ public sealed class BatchStorageTests : IDisposable
         Assert.Throws<InvalidDataException>(() => CatalogBatchRecoveryMarkers.ListPending(_root));
         Assert.True(new TripoPanelRecoveryStore("revit", _root).LoadCredentialMutationBlocks().HasBlock);
         Directory.Delete(directory);
+    }
+
+    [Fact]
+    public void NewPrivateFileHasExplicitOwnerAndRemainsExclusivelyLocked()
+    {
+        CatalogBatchStorageSafety.EnsurePrivateDirectory(_root);
+        string path = Path.Combine(_root, "private.lock");
+        using (FileStream stream = CatalogBatchStorageSafety.CreatePrivateFile(path))
+        {
+            CatalogBatchStorageSafety.ValidatePrivateFile(path);
+            if (OperatingSystem.IsWindows())
+            {
+                using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+                FileSecurity security = stream.GetAccessControl();
+                Assert.Equal(identity.User, security.GetOwner(typeof(SecurityIdentifier)));
+                Assert.True(security.AreAccessRulesProtected);
+                FileSystemAccessRule rule = Assert.Single(security.GetAccessRules(true, true, typeof(SecurityIdentifier))
+                    .Cast<FileSystemAccessRule>());
+                Assert.Equal(identity.User, rule.IdentityReference);
+                Assert.Equal(AccessControlType.Allow, rule.AccessControlType);
+                Assert.Equal(FileSystemRights.FullControl, rule.FileSystemRights);
+            }
+            Assert.ThrowsAny<IOException>(() => CatalogBatchStorageSafety.OpenLock(path));
+        }
+        using FileStream reopened = CatalogBatchStorageSafety.OpenLock(path);
+        Assert.Equal(0, reopened.Length);
+    }
+
+    [Fact]
+    public void WindowsNonUserDefaultOwnerIsStillRejectedForExistingFiles()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+        SecurityIdentifier user = identity.User!;
+        SecurityIdentifier defaultOwner = identity.Owner!;
+        // The elevated Windows CI runner has a group default owner; standard user tokens may not.
+        if (defaultOwner.Equals(user)) return;
+        CatalogBatchStorageSafety.EnsurePrivateDirectory(_root);
+        string path = Path.Combine(_root, "existing.lock");
+        FileSecurity security = new();
+        security.SetOwner(defaultOwner);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl, AccessControlType.Allow));
+        using (new FileInfo(path).Create(FileMode.CreateNew, FileSystemRights.Read | FileSystemRights.Write,
+            FileShare.None, 4096, FileOptions.None, security)) { }
+        UnauthorizedAccessException exception = Assert.Throws<UnauthorizedAccessException>(() =>
+            CatalogBatchStorageSafety.ValidatePrivateFile(path));
+        Assert.Equal("catalog_batch_owner_invalid", exception.Message);
+        Assert.Throws<UnauthorizedAccessException>(() => CatalogBatchStorageSafety.OpenLock(path));
+        Assert.Equal(defaultOwner, new FileInfo(path).GetAccessControl().GetOwner(typeof(SecurityIdentifier)));
     }
 
     public void Dispose()

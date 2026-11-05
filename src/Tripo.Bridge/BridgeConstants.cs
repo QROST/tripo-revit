@@ -2,7 +2,7 @@ namespace Tripo.Bridge;
 
 public static class BridgeConstants
 {
-    public const string ProtocolVersion = "3";
+    public const string ProtocolVersion = "4";
     public const int MaximumMessageBytes = 64 * 1024;
     // The upload guide advertises a 10 MB accepted maximum. Keep local and
     // remote staging at that conservative provider-bound limit so an image is

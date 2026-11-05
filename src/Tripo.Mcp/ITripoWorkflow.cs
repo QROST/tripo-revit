@@ -77,4 +77,24 @@ public interface ITripoWorkflow
         CancellationToken cancellationToken) =>
         throw new NotSupportedException(
             "This workflow does not support OBJ staging.");
+
+    Task<ObjTaskImportReceipt> ImportCatalogObjTaskAsync(
+        string conversionTaskId,
+        string name,
+        string documentSessionId,
+        string operationId,
+        bool applyMaterials,
+        Tripo.Bridge.CatalogFamilyOptions catalog,
+        CancellationToken cancellationToken,
+        bool requireExistingImport = false) =>
+        throw new NotSupportedException(
+            "This workflow does not support catalog family imports.");
+
+    Task<ImageTaskCreationReceipt> CreateCatalogImageTaskAsync(
+        Tripo.Bridge.HostControlCreateImageTaskRequest request, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This workflow does not support catalog credential anchors.");
+
+    Task<ObjConversionCreationReceipt> CreateCatalogObjConversionAsync(
+        Tripo.Bridge.HostControlCreateObjConversionRequest request, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This workflow does not support catalog credential anchors.");
 }

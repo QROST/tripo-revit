@@ -68,6 +68,10 @@ jobs:
           $root = "src/Tripo.Revit/bin/Release/net8.0-windows/${{ matrix.revit_year }}"
           foreach ($path in @(
             "$root/Tripo.Revit.dll",
+            "$root/Tripo.Catalog.dll",
+            "$root/AngleSharp.dll",
+            "$root/UglyToad.PdfPig.dll",
+            "$root/UglyToad.PdfPig.Filters.Jpx.OpenJpeg.dll",
             "$root/Tripo.Revit.addin",
             "$root/sidecar/Tripo.Revit.Mcp.dll"
           )) {

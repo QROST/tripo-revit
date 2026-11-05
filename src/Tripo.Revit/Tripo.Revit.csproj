@@ -7,6 +7,8 @@
     <RootNamespace>Tripo.Revit</RootNamespace>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <!-- Revit loads this library from its add-in folder, outside a NuGet app host. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <!-- Default 2026; override per build with /p:RevitYear=2025. Keep these
          exact package versions in sync with Autodesk's NuGet catalog. -->
     <RevitYear Condition="'$(RevitYear)' == ''">2026</RevitYear>
@@ -115,6 +117,7 @@
   <ItemGroup>
     <ProjectReference Include="../Tripo.Bridge/Tripo.Bridge.csproj" />
     <ProjectReference Include="../Tripo.HostUi/Tripo.HostUi.csproj" />
+    <ProjectReference Include="../Tripo.Catalog/Tripo.Catalog.csproj" />
     <ProjectReference
       Include="../Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj"
       ReferenceOutputAssembly="false" />

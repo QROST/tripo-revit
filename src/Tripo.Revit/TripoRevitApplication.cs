@@ -62,6 +62,10 @@ public sealed class TripoRevitApplication : IExternalApplication, IDisposable
             PushButton button = (PushButton)ribbonPanel.AddItem(buttonData);
             button.ToolTip =
                 "Generate, convert, and import Tripo models without leaving Revit.";
+            PushButton catalogButton = (PushButton)ribbonPanel.AddItem(new PushButtonData(
+                "Tripo.OpenCatalog", "Catalog Families", assemblyPath,
+                typeof(ShowTripoCatalogCommand).FullName!));
+            catalogButton.ToolTip = "Review furniture catalogs and generate an ordered batch of mesh families.";
             return Result.Succeeded;
         }
         catch (Exception exception)

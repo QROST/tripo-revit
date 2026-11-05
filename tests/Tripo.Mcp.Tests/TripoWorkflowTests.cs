@@ -3,7 +3,7 @@ using Xunit;
 
 namespace Tripo.Mcp.Tests;
 
-public sealed class TripoWorkflowTests : IDisposable
+public sealed partial class TripoWorkflowTests : IDisposable
 {
     private readonly string _journalRoot;
     private readonly Tripo.Mcp.PaidOperationJournal _journal;
@@ -1399,10 +1399,18 @@ public sealed class TripoWorkflowTests : IDisposable
 
         public bool LastConversionWithMaterials { get; private set; }
 
-        public string OperationScopeFingerprint { get; init; } =
+        public string OperationScopeFingerprint { get; set; } =
             new string('b', 64);
 
         public Action? OnTextFingerprint { get; init; }
+
+        public Action? OnImageFingerprint { get; set; }
+
+        public Action? OnConversionFingerprint { get; set; }
+
+        public Action? OnImageTaskIdDurable { get; set; }
+
+        public Action? OnConversionTaskIdDurable { get; set; }
 
         public Action? OnTextTaskIdDurable { get; init; }
 
@@ -1436,18 +1444,24 @@ public sealed class TripoWorkflowTests : IDisposable
         public string GetObjConversionOperationFingerprint(
             string taskId,
             int faceLimit,
-            bool withMaterials) =>
-            Fingerprint(
+            bool withMaterials)
+        {
+            OnConversionFingerprint?.Invoke();
+            return Fingerprint(
                 $"convert|{OperationScopeFingerprint}|" +
                 $"{taskId}|{faceLimit}|{withMaterials}");
+        }
 
         public string GetImageTaskOperationFingerprint(
-            Tripo.Mcp.ImageGenerationOptions options) =>
-            Fingerprint(
+            Tripo.Mcp.ImageGenerationOptions options)
+        {
+            OnImageFingerprint?.Invoke();
+            return Fingerprint(
                 $"image|{OperationScopeFingerprint}|" +
                 $"{options.Model}|{options.Image.Sha256}|" +
                 $"{options.Image.ByteLength}|{options.Image.MediaType}|" +
                 $"{options.FaceLimit}|{options.WithMaterials}");
+        }
 
         public async Task<string> CreateTextModelAsync(
             Tripo.Mcp.TextGenerationOptions options,
@@ -1496,6 +1510,7 @@ public sealed class TripoWorkflowTests : IDisposable
             CreateConversionCalls++;
             LastConversionWithMaterials = withMaterials;
             await checkpoint.TaskIdReceivedAsync("task_conversion123");
+            OnConversionTaskIdDurable?.Invoke();
             return "task_conversion123";
         }
 
@@ -1554,6 +1569,7 @@ public sealed class TripoWorkflowTests : IDisposable
             }
 
             await checkpoint.TaskIdReceivedAsync("task_image123");
+            OnImageTaskIdDurable?.Invoke();
             return "task_image123";
         }
 

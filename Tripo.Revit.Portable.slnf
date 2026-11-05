@@ -8,7 +8,10 @@
       "src/Tripo.Revit.Mcp/Tripo.Revit.Mcp.csproj",
       "tests/Tripo.Bridge.Tests/Tripo.Bridge.Tests.csproj",
       "tests/Tripo.HostUi.Tests/Tripo.HostUi.Tests.csproj",
-      "tests/Tripo.Mcp.Tests/Tripo.Mcp.Tests.csproj"
+      "tests/Tripo.Mcp.Tests/Tripo.Mcp.Tests.csproj",
+      "src/Tripo.Catalog/Tripo.Catalog.csproj",
+      "src/Tripo.Catalog.Cli/Tripo.Catalog.Cli.csproj",
+      "tests/Tripo.Catalog.Tests/Tripo.Catalog.Tests.csproj"
     ]
   }
 }

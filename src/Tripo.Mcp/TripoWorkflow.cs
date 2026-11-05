@@ -235,7 +235,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
             effectiveModel);
     }
 
-    public async Task<ImageTaskCreationReceipt> CreateImageTaskAsync(
+    public Task<ImageTaskCreationReceipt> CreateImageTaskAsync(
         Tripo.Bridge.StagedImageTransfer image,
         int faceLimit,
         bool withMaterials,
@@ -244,6 +244,24 @@ public sealed class TripoWorkflow : ITripoWorkflow
         CancellationToken cancellationToken,
         bool requireExistingOperation = false,
         string? model = null)
+        => CreateImageTaskCoreAsync(image, faceLimit, withMaterials, operationId, confirmExternalCost,
+            requireExistingOperation, model, null, cancellationToken);
+
+    public Task<ImageTaskCreationReceipt> CreateCatalogImageTaskAsync(
+        Tripo.Bridge.HostControlCreateImageTaskRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.CredentialAnchor);
+        return CreateImageTaskCoreAsync(request.Image, request.FaceLimit, request.WithMaterials,
+            request.OperationId, request.ConfirmExternalCost, request.RequireExistingOperation,
+            request.Model, request.CredentialAnchor, cancellationToken);
+    }
+
+    private async Task<ImageTaskCreationReceipt> CreateImageTaskCoreAsync(
+        Tripo.Bridge.StagedImageTransfer image, int faceLimit, bool withMaterials,
+        string operationId, bool confirmExternalCost, bool requireExistingOperation,
+        string? model, Tripo.Bridge.HostControlImageCredentialAnchor? credentialAnchor,
+        CancellationToken cancellationToken)
     {
         EnsureCostConfirmed(confirmExternalCost);
         Tripo.Bridge.ImageTransferStore.ValidateDescriptor(image);
@@ -251,6 +269,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string canonicalOperationId =
             PaidOperationDescriptor.CanonicalizeOperationId(operationId);
         using IDisposable executionLease = _executionGate.Acquire();
+        await ValidateCatalogCredentialAnchorAsync(credentialAnchor, cancellationToken).ConfigureAwait(false);
         string effectiveModel = _apiClient.ResolveEffectiveModel(model);
         ImageGenerationOptions generationOptions =
             new(image, faceLimit, effectiveModel, withMaterials);
@@ -314,7 +333,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
             image.Sha256);
     }
 
-    public async Task<ObjConversionCreationReceipt> CreateObjConversionAsync(
+    public Task<ObjConversionCreationReceipt> CreateObjConversionAsync(
         string sourceTaskId,
         int faceLimit,
         bool withMaterials,
@@ -322,6 +341,23 @@ public sealed class TripoWorkflow : ITripoWorkflow
         bool confirmExternalCost,
         CancellationToken cancellationToken,
         bool requireExistingOperation = false)
+        => CreateObjConversionCoreAsync(sourceTaskId, faceLimit, withMaterials, operationId,
+            confirmExternalCost, requireExistingOperation, null, cancellationToken);
+
+    public Task<ObjConversionCreationReceipt> CreateCatalogObjConversionAsync(
+        Tripo.Bridge.HostControlCreateObjConversionRequest request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.CredentialAnchor);
+        return CreateObjConversionCoreAsync(request.SourceTaskId, request.FaceLimit, request.WithMaterials,
+            request.OperationId, request.ConfirmExternalCost, request.RequireExistingOperation,
+            request.CredentialAnchor, cancellationToken);
+    }
+
+    private async Task<ObjConversionCreationReceipt> CreateObjConversionCoreAsync(
+        string sourceTaskId, int faceLimit, bool withMaterials, string operationId,
+        bool confirmExternalCost, bool requireExistingOperation,
+        Tripo.Bridge.HostControlImageCredentialAnchor? credentialAnchor, CancellationToken cancellationToken)
     {
         EnsureCostConfirmed(confirmExternalCost);
         TripoV3Client.ValidateTaskId(sourceTaskId);
@@ -329,6 +365,7 @@ public sealed class TripoWorkflow : ITripoWorkflow
         string canonicalOperationId =
             PaidOperationDescriptor.CanonicalizeOperationId(operationId);
         using IDisposable executionLease = _executionGate.Acquire();
+        await ValidateCatalogCredentialAnchorAsync(credentialAnchor, cancellationToken).ConfigureAwait(false);
         string requestFingerprint;
         try
         {
@@ -399,7 +436,33 @@ public sealed class TripoWorkflow : ITripoWorkflow
             "OBJ");
     }
 
-    public async Task<ObjTaskImportReceipt> ImportObjTaskAsync(
+    private async Task ValidateCatalogCredentialAnchorAsync(
+        Tripo.Bridge.HostControlImageCredentialAnchor? anchor, CancellationToken cancellationToken)
+    {
+        if (anchor is null) return;
+        try
+        {
+            // This executes inside the same credential execution lease as the new
+            // operation. A key change cannot slip between this check and dispatch.
+            Tripo.Bridge.ImageTransferStore.ValidateDescriptor(anchor.Image);
+            TripoV3Client.ValidateFaceLimit(anchor.FaceLimit);
+            string model = _apiClient.ResolveEffectiveModel(anchor.Model);
+            if (model != anchor.Model) throw new ArgumentException("The anchor model is not exact.");
+            string fingerprint = _apiClient.GetImageTaskOperationFingerprint(new(
+                anchor.Image, anchor.FaceLimit, model, anchor.WithMaterials));
+            PaidOperationDescriptor descriptor = PaidOperationDescriptor.ForImageTask(
+                anchor.OperationId, fingerprint, anchor.Image);
+            await using PaidOperationLease existing = await _operationJournal.AcquireAsync(
+                descriptor, cancellationToken, requireExistingOperation: true).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            throw new Tripo.Bridge.BridgeCallException("catalog_credential_anchor_unverified",
+                "The original batch credential could not be verified against its saved operation. Restore the original key and retain the batch records; no new paid operation was created.", exception);
+        }
+    }
+
+    public Task<ObjTaskImportReceipt> ImportObjTaskAsync(
         string conversionTaskId,
         string name,
         string documentSessionId,
@@ -409,6 +472,60 @@ public sealed class TripoWorkflow : ITripoWorkflow
         CancellationToken cancellationToken,
         string placementMode = "origin",
         bool associateLevel = false)
+        => ImportObjTaskCoreAsync(
+            conversionTaskId, name, documentSessionId, operationId, importMode,
+            applyMaterials, placementMode, associateLevel, null, false, cancellationToken);
+
+    public Task<ObjTaskImportReceipt> ImportCatalogObjTaskAsync(
+        string conversionTaskId,
+        string name,
+        string documentSessionId,
+        string operationId,
+        bool applyMaterials,
+        Tripo.Bridge.CatalogFamilyOptions catalog,
+        CancellationToken cancellationToken,
+        bool requireExistingImport = false)
+    {
+        ArgumentNullException.ThrowIfNull(catalog);
+        Tripo.Bridge.CatalogFamilyPreparation.Validate(catalog);
+        if (requireExistingImport)
+        {
+            return ProbeCatalogImportAsync(conversionTaskId, name, documentSessionId,
+                operationId, applyMaterials, catalog, cancellationToken);
+        }
+        return ImportObjTaskCoreAsync(
+            conversionTaskId, name, documentSessionId, operationId, "family",
+            applyMaterials, "origin", false, catalog, requireExistingImport, cancellationToken);
+    }
+
+    private async Task<ObjTaskImportReceipt> ProbeCatalogImportAsync(
+        string conversionTaskId, string name, string documentSessionId, string operationId,
+        bool applyMaterials, Tripo.Bridge.CatalogFamilyOptions catalog, CancellationToken cancellationToken)
+    {
+        TripoV3Client.ValidateTaskId(conversionTaskId);
+        string canonicalId = ValidateImportArguments(name, documentSessionId, operationId);
+        Tripo.Bridge.HostContextReceipt context = await _hostConnection.GetContextAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (context.Host != "revit" || context.DocumentSessionId != documentSessionId)
+            throw new TripoWorkflowException("Return to the original Revit document before recovering a catalog import.");
+        Tripo.Bridge.HostImportReceipt receipt = await _hostConnection.ImportMeshAsync(new(
+            documentSessionId, "", "", null, [], "meters", "Y", "right", name, canonicalId,
+            "family", applyMaterials, Catalog: catalog, RequireExisting: true), cancellationToken).ConfigureAwait(false);
+        return new ObjTaskImportReceipt(canonicalId, conversionTaskId, null, receipt, []);
+    }
+
+    private async Task<ObjTaskImportReceipt> ImportObjTaskCoreAsync(
+        string conversionTaskId,
+        string name,
+        string documentSessionId,
+        string operationId,
+        string importMode,
+        bool applyMaterials,
+        string placementMode,
+        bool associateLevel,
+        Tripo.Bridge.CatalogFamilyOptions? catalog,
+        bool requireExistingImport,
+        CancellationToken cancellationToken)
     {
         TripoV3Client.ValidateTaskId(conversionTaskId);
         string canonicalOperationId = ValidateImportArguments(
@@ -421,6 +538,13 @@ public sealed class TripoWorkflow : ITripoWorkflow
             await RequireActiveDocumentAsync(documentSessionId, cancellationToken)
                 .ConfigureAwait(false);
         string resolvedMode = ResolveImportMode(requestedMode, context.Host);
+        if (catalog is not null &&
+            (!string.Equals(context.Host, "revit", StringComparison.Ordinal) ||
+             !string.Equals(resolvedMode, "family", StringComparison.Ordinal)))
+        {
+            throw new TripoWorkflowException(
+                "Catalog families require a matching Revit project.");
+        }
         List<string> warnings = new();
         if (associateLevel &&
             !string.Equals(resolvedMode, "family", StringComparison.Ordinal))
@@ -462,7 +586,9 @@ public sealed class TripoWorkflow : ITripoWorkflow
             resolvedMode,
             applyMaterials,
             normalizedPlacement,
-            associateLevel);
+            associateLevel,
+            catalog,
+            requireExistingImport);
         Tripo.Bridge.HostImportReceipt hostReceipt =
             await _hostConnection.ImportMeshAsync(importRequest, cancellationToken)
                 .ConfigureAwait(false);

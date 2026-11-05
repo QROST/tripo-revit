@@ -109,6 +109,39 @@ the WPF layer. They do not prove that Windows renders text as copyable, that a
 dialog defaults to the intended button, or that UI Automation exposes the
 expected label and help relationships.
 
+## Catalog family gate
+
+Local development receipt, 2026-09-10 (macOS, .NET SDK 8.0.423): the complete
+Release portable gate passed 589 tests: Bridge 136, HostUi 136, MCP 244, Catalog
+73. Revit 2025 and 2026 host builds both passed with zero warnings/errors;
+release-candidate synthetic regressions passed. The Release CLI also read the
+live Muuto HTTPS product URL and the retained Muuto/Wireframe/OE1 samples. No
+real provider generation, native Revit interaction or published release was
+performed as part of these checks.
+
+`Tripo.Catalog.Tests` runs synthetic PDF/HTML/unit parsing and fake-sidecar batch
+recovery tests as part of the portable solution. Bridge tests cover size fitting,
+metadata/placement identity, artifact path checks and rejection of the immediately
+preceding protocol. MCP tests verify complete catalog forwarding and existing-only
+import recovery with zero provider/artifact calls. Packaging refuses missing
+AngleSharp, PdfPig and JPEG2000 decoder assemblies.
+
+Windows storage regressions cover explicit current-user ownership at file creation,
+an owner-only protected ACL, exclusive locking, and rejection of existing files
+owned by a different default token owner. Concurrent-dispatch tests surface failures
+before dispatch and bound their waits instead of hiding storage failures as hangs.
+
+Before accepting the feature in each real Revit year, verify a two-product batch:
+review multiple source pages and images; preview and confirm a URL image; check
+width/depth/height, Furniture category, readable RFA/type names and identity
+parameters; measure placement with rotation and a new row; pause during generation
+and import; switch active projects; recover a lost import receipt; Undo an import
+and confirm recovery does not recreate it; reopen the saved RFA independently.
+Also close the catalog window and exit Revit while work is in flight, checking that
+the host exits cleanly and accepted task IDs remain saved. These are pending host
+checks, not claims derived from passing automated tests. See
+[catalog workflow and limits](./CATALOG-WORKFLOW.md).
+
 Generated `bin/` and `obj/` files are ignored. A clean test receipt also
 requires `git diff --check` and a clean `git status`.
 

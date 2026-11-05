@@ -328,10 +328,32 @@ public sealed class TripoPanelRecoveryStore : IDisposable
         Load(includeActiveOwners: false);
 
     public TripoPanelRecoveryLoadResult LoadCredentialMutationBlocks(
-        bool excludeCurrentStoreHint = false)
+        bool excludeCurrentStoreHint = false,
+        string? excludeCatalogBatchId = null)
     {
         List<LoadedTripoPanelRecoveryHint> hints = [];
         List<TripoPanelRecoveryIssue> issues = [];
+        try
+        {
+            foreach (string batchId in Tripo.Bridge.CatalogBatchRecoveryMarkers.ListPending(_rootDirectory))
+            {
+                if (!string.Equals(batchId, excludeCatalogBatchId, StringComparison.Ordinal))
+                {
+                    issues.Add(new TripoPanelRecoveryIssue(
+                        "catalog-batch/" + batchId,
+                        "catalog_batch_pending",
+                        "An unfinished catalogue batch must be resumed or reconciled before changing credentials."));
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or
+            JsonException or InvalidOperationException or System.Security.SecurityException)
+        {
+            issues.Add(new TripoPanelRecoveryIssue(
+                "(catalog-batch-recovery)",
+                "catalog_batch_recovery_invalid",
+                "Catalogue batch recovery storage requires review before changing credentials."));
+        }
         try
         {
             ValidateCredentialWorkflowLeaseFile();
